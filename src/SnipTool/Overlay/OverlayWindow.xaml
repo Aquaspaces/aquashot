@@ -13,6 +13,8 @@
                 MouseMove="OnMouseMove"
                 MouseLeftButtonUp="OnMouseUp">
             <Rectangle x:Name="SelRect" Stroke="#4DA3FF" StrokeThickness="2" Visibility="Collapsed"/>
+            <Rectangle x:Name="WinRect" Stroke="#4DFFA3" StrokeThickness="2"
+                       Fill="#224DFFA3" Visibility="Collapsed"/>
         </Canvas>
     </Grid>
 </Window>

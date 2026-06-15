@@ -14,6 +14,11 @@ namespace SnipTool.Overlay;
 
 public partial class OverlayWindow : Window
 {
+    public enum OverlayMode { Region, Window }
+    public OverlayMode Mode { get; set; } = OverlayMode.Region;
+    private readonly SnipTool.Selection.WindowDetector _detector = new();
+    private PixelRect? _hoverWindow;
+
     private readonly CapturedFrame _frame;
     private Point _start;
     private bool _dragging;
@@ -53,8 +58,19 @@ public partial class OverlayWindow : Window
             local.Width, local.Height);
     }
 
+    private (double vx, double vy) DipToVirtual(Point p)
+    {
+        double sc = _frame.Monitor.DpiScale;
+        return (p.X * sc + _frame.Monitor.Bounds.X, p.Y * sc + _frame.Monitor.Bounds.Y);
+    }
+
     private void OnMouseDown(object sender, MouseButtonEventArgs e)
     {
+        if (Mode == OverlayMode.Window)
+        {
+            if (_hoverWindow is PixelRect wr) RegionSelected?.Invoke(wr);
+            return;
+        }
         _start = e.GetPosition(Overlay);
         _dragging = true;
         SelRect.Visibility = Visibility.Visible;
@@ -63,6 +79,23 @@ public partial class OverlayWindow : Window
 
     private void OnMouseMove(object sender, MouseEventArgs e)
     {
+        if (Mode == OverlayMode.Window && !_dragging)
+        {
+            var (vx, vy) = DipToVirtual(e.GetPosition(Overlay));
+            var win = _detector.WindowAt(vx, vy);
+            if (win is PixelRect wr)
+            {
+                _hoverWindow = wr;
+                double sc = _frame.Monitor.DpiScale;
+                Canvas.SetLeft(WinRect, (wr.X - _frame.Monitor.Bounds.X) / sc);
+                Canvas.SetTop(WinRect, (wr.Y - _frame.Monitor.Bounds.Y) / sc);
+                WinRect.Width = wr.Width / sc;
+                WinRect.Height = wr.Height / sc;
+                WinRect.Visibility = Visibility.Visible;
+            }
+            else { _hoverWindow = null; WinRect.Visibility = Visibility.Collapsed; }
+            return;
+        }
         if (!_dragging) return;
         var p = e.GetPosition(Overlay);
         double x = Math.Min(_start.X, p.X), y = Math.Min(_start.Y, p.Y);
