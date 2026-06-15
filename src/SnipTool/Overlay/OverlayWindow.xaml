@@ -15,6 +15,9 @@
             <Rectangle x:Name="SelRect" Stroke="#4DA3FF" StrokeThickness="2" Visibility="Collapsed"/>
             <Rectangle x:Name="WinRect" Stroke="#4DFFA3" StrokeThickness="2"
                        Fill="#224DFFA3" Visibility="Collapsed"/>
+            <Border x:Name="DimLabel" Background="#CC1C1C22" CornerRadius="3" Padding="5,2" Visibility="Collapsed">
+                <TextBlock x:Name="DimText" Foreground="White" FontSize="12"/>
+            </Border>
         </Canvas>
     </Grid>
 </Window>
