@@ -1,4 +1,4 @@
-# Snip Tool
+# Aquashot
 
 A native-feeling Windows screenshot tool with a fast, Flameshot-style inline annotation flow — built to feel as polished as the Windows Snipping Tool while giving power users more, and to get **multi-monitor + mixed-DPI** capture right (the area where Flameshot struggles).
 
@@ -30,7 +30,7 @@ The core design decision: the capture overlay is **one borderless window per mon
 
 ```bash
 dotnet build
-dotnet run --project src/SnipTool
+dotnet run --project src/Aquashot
 ```
 
 The app starts in the system tray (no main window). Press `PrtSc` (or use the tray menu) to capture.
@@ -48,7 +48,7 @@ Pure logic is covered by unit tests (settings round-trip, filename generation, m
 ## Project layout
 
 ```
-src/SnipTool/
+src/Aquashot/
   Capture/      monitor enumeration + per-monitor freeze-frame
   Selection/    PixelRect, VirtualDesktop, SelectionEngine, WindowDetector
   Overlay/      per-monitor overlay windows + controller (the multi-mon core)
@@ -58,7 +58,7 @@ src/SnipTool/
   Settings/     AppSettings, JSON store, settings window, startup registration
   Input/        global hotkey service
   Tray/         tray host wiring it all together
-tests/SnipTool.Tests/
+tests/Aquashot.Tests/
 ```
 
 ## Backlog (deferred past v1)
