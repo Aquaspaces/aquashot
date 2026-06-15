@@ -52,12 +52,20 @@ public class GraphicsCaptureService : ICaptureService
         IntPtr mem = CreateCompatibleDC(screen);
         IntPtr bmp = CreateCompatibleBitmap(screen, w, h);
         IntPtr old = SelectObject(mem, bmp);
-        BitBlt(mem, 0, 0, w, h, screen, (int)r.X, (int)r.Y, SRCCOPY);
-        var src = Imaging.CreateBitmapSourceFromHBitmap(bmp, IntPtr.Zero, Int32Rect.Empty,
-            BitmapSizeOptions.FromEmptyOptions());
-        src.Freeze();
-        SelectObject(mem, old);
-        DeleteObject(bmp); DeleteDC(mem); ReleaseDC(IntPtr.Zero, screen);
-        return src;
+        try
+        {
+            BitBlt(mem, 0, 0, w, h, screen, (int)r.X, (int)r.Y, SRCCOPY);
+            var src = Imaging.CreateBitmapSourceFromHBitmap(bmp, IntPtr.Zero, Int32Rect.Empty,
+                BitmapSizeOptions.FromEmptyOptions());
+            src.Freeze();
+            return src;
+        }
+        finally
+        {
+            SelectObject(mem, old);
+            DeleteObject(bmp);
+            DeleteDC(mem);
+            ReleaseDC(IntPtr.Zero, screen);
+        }
     }
 }
