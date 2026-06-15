@@ -1,5 +1,7 @@
 using System;
+using System.Linq;
 using Aquashot.Capture;
+using Aquashot.Selection;
 using Aquashot.Input;
 using Aquashot.Output;
 using Aquashot.Overlay;
@@ -37,6 +39,7 @@ public class TrayHost : IDisposable
         var menu = new ContextMenuStrip();
         menu.Items.Add("Capture region", null, (_, __) => StartCapture(OverlayWindow.OverlayMode.Region));
         menu.Items.Add("Capture window", null, (_, __) => StartCapture(OverlayWindow.OverlayMode.Window));
+        menu.Items.Add("Capture all monitors", null, (_, __) => CaptureAllMonitors());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Settings…", null, (_, __) => OpenSettings());
         menu.Items.Add("Quit", null, (_, __) => Quit());
@@ -87,6 +90,25 @@ public class TrayHost : IDisposable
             _capturing = false;
             _icon.ShowBalloonTip(3000, "Aquashot", "Capture failed: " + ex.Message, ToolTipIcon.Error);
         }
+    }
+
+    private void CaptureAllMonitors()
+    {
+        if (_capturing) return;
+        _capturing = true;
+        try
+        {
+            var frames = _capture.FreezeAll();
+            var monitors = frames.Select(f => f.Monitor).ToList();
+            var composite = DesktopStitcher.Stitch(frames, new VirtualDesktop(monitors).Bounds);
+            var path = _output.SaveComposite(composite, _settings, DateTime.Now);
+            _icon.ShowBalloonTip(2000, "Aquashot", "All monitors saved & copied: " + path, ToolTipIcon.Info);
+        }
+        catch (Exception ex)
+        {
+            _icon.ShowBalloonTip(3000, "Aquashot", "Capture failed: " + ex.Message, ToolTipIcon.Error);
+        }
+        finally { _capturing = false; }
     }
 
     private void OpenSettings()
