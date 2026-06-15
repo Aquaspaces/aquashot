@@ -171,6 +171,7 @@ public partial class OverlayWindow : Window
         if (_phase == Phase.Annotating)
         {
             if (e.Key == Key.Enter) Confirm();
+            else if (e.Key == Key.C && (Keyboard.Modifiers & ModifierKeys.Control) != 0) Confirm();
             else if (e.Key == Key.Z && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc!.Undo(); _layer!.Refresh(); }
             else if (e.Key == Key.Y && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc!.Redo(); _layer!.Refresh(); }
         }
