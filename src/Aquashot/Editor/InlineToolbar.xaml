@@ -1,0 +1,26 @@
+<UserControl x:Class="Aquashot.Editor.InlineToolbar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border Background="#1C1C22" CornerRadius="6" Padding="4"
+            BorderBrush="#33FFFFFF" BorderThickness="1">
+        <StackPanel Orientation="Horizontal">
+            <Button x:Name="BtnArrow"   Content="↗"  Width="30" Margin="1" ToolTip="Arrow"/>
+            <Button x:Name="BtnRect"    Content="▭"  Width="30" Margin="1" ToolTip="Rectangle"/>
+            <Button x:Name="BtnEllipse" Content="◯"  Width="30" Margin="1" ToolTip="Ellipse"/>
+            <Button x:Name="BtnLine"    Content="／"  Width="30" Margin="1" ToolTip="Line"/>
+            <Button x:Name="BtnPen"     Content="✎"  Width="30" Margin="1" ToolTip="Pen"/>
+            <Button x:Name="BtnText"    Content="T"  Width="30" Margin="1" ToolTip="Text"/>
+            <Button x:Name="BtnCounter" Content="①"  Width="30" Margin="1" ToolTip="Counter"/>
+            <Button x:Name="BtnBlur"    Content="▦"  Width="30" Margin="1" ToolTip="Blur"/>
+            <Rectangle Width="1" Fill="#33FFFFFF" Margin="3,2"/>
+            <ComboBox x:Name="ColorBox" Width="64" Margin="1" ToolTip="Color"/>
+            <Slider x:Name="WidthSlider" Width="70" Minimum="1" Maximum="12" Value="3"
+                    VerticalAlignment="Center" Margin="3,0" ToolTip="Stroke width"/>
+            <Rectangle Width="1" Fill="#33FFFFFF" Margin="3,2"/>
+            <Button x:Name="BtnUndo"    Content="⟲"  Width="30" Margin="1" ToolTip="Undo"/>
+            <Button x:Name="BtnRedo"    Content="⟳"  Width="30" Margin="1" ToolTip="Redo"/>
+            <Button x:Name="BtnConfirm" Content="✓"  Width="30" Margin="1" ToolTip="Confirm (Enter)"/>
+            <Button x:Name="BtnCancel"  Content="✕"  Width="30" Margin="1" ToolTip="Cancel (Esc)"/>
+        </StackPanel>
+    </Border>
+</UserControl>

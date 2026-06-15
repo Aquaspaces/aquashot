@@ -1,4 +1,4 @@
-# Snip Tool — Design Spec
+# Aquashot — Design Spec
 
 **Date:** 2026-06-15
 **Status:** Approved (brainstorm)
