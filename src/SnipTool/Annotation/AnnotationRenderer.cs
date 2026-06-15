@@ -53,7 +53,8 @@ public class AnnotationRenderer
 
     public BitmapSource Flatten(BitmapSource baseImage, PixelRect crop, IReadOnlyList<Shape> shapes)
     {
-        int cx = (int)crop.X, cy = (int)crop.Y, cw = (int)crop.Width, ch = (int)crop.Height;
+        int cx = (int)crop.X, cy = (int)crop.Y;
+        int cw = Math.Max(1, (int)crop.Width), ch = Math.Max(1, (int)crop.Height);
         var cropped = new CroppedBitmap(baseImage, new Int32Rect(cx, cy, cw, ch));
         var dv = new DrawingVisual();
         using (var dc = dv.RenderOpen())
@@ -135,9 +136,10 @@ public class AnnotationRenderer
     {
         var region = new PixelRect(b.X, b.Y, b.W, b.H);
         double block = Math.Max(6, b.W / 12);
+        var converted = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
         foreach (var blk in BlurRegion.PixelateBlocks(region, block))
         {
-            var color = AverageColor(source, blk);
+            var color = AverageColor(converted, blk);
             var brush = new SolidColorBrush(color); brush.Freeze();
             dc.DrawRectangle(brush, null, new Rect(blk.X, blk.Y, blk.Width, blk.Height));
         }
@@ -151,10 +153,9 @@ public class AnnotationRenderer
         y = Math.Clamp(y, 0, src.PixelHeight - 1);
         w = Math.Min(w, src.PixelWidth - x);
         h = Math.Min(h, src.PixelHeight - y);
-        var conv = new FormatConvertedBitmap(src, PixelFormats.Bgra32, null, 0);
         int stride = w * 4;
         var px = new byte[h * stride];
-        conv.CopyPixels(new Int32Rect(x, y, w, h), px, stride, 0);
+        src.CopyPixels(new Int32Rect(x, y, w, h), px, stride, 0);
         long bsum = 0, gsum = 0, rsum = 0; int n = w * h;
         for (int i = 0; i < px.Length; i += 4) { bsum += px[i]; gsum += px[i + 1]; rsum += px[i + 2]; }
         return Color.FromRgb((byte)(rsum / n), (byte)(gsum / n), (byte)(bsum / n));

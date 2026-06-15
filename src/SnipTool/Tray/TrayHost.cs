@@ -60,10 +60,11 @@ public class TrayHost : IDisposable
     {
         if (_capturing) return;
         _capturing = true;
+        OverlayController? ctrl = null;
         try
         {
             var frames = _capture.FreezeAll();
-            var ctrl = new OverlayController { Mode = mode };
+            ctrl = new OverlayController { Mode = mode };
             ctrl.Confirmed += (f, r, d) =>
             {
                 _capturing = false;
@@ -82,6 +83,7 @@ public class TrayHost : IDisposable
         }
         catch (Exception ex)
         {
+            ctrl?.Close();
             _capturing = false;
             _icon.ShowBalloonTip(3000, "Snip Tool", "Capture failed: " + ex.Message, ToolTipIcon.Error);
         }

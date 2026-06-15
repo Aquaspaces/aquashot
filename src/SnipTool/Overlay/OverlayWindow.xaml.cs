@@ -28,6 +28,7 @@ public partial class OverlayWindow : Window
     private Phase _phase = Phase.Selecting;
     private Point _start;
     private bool _dragging;
+    private bool _closed;
 
     private readonly WindowDetector _detector = new();
     private PixelRect? _hoverWindow;
@@ -68,6 +69,14 @@ public partial class OverlayWindow : Window
         Activate();
         Focus();
     }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _closed = true;
+        base.OnClosed(e);
+    }
+
+    private void RaiseCancelled() { if (!_closed) Cancelled?.Invoke(); }
 
     // ---- coordinate helpers ----
     private (double vx, double vy) DipToVirtual(Point p) =>
@@ -136,13 +145,13 @@ public partial class OverlayWindow : Window
         _dragging = false;
         Overlay.ReleaseMouseCapture();
         var rect = ToVirtualRect(_start, e.GetPosition(Overlay));
-        if (rect.Width < 2 || rect.Height < 2) { Cancelled?.Invoke(); return; }
+        if (rect.Width < 2 || rect.Height < 2) { RaiseCancelled(); return; }
         BeginAnnotate(rect);
     }
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape) { Cancelled?.Invoke(); return; }
+        if (e.Key == Key.Escape) { RaiseCancelled(); return; }
         if (_phase == Phase.Annotating)
         {
             if (e.Key == Key.Enter) Confirm();
@@ -158,7 +167,7 @@ public partial class OverlayWindow : Window
         _phase = Phase.Annotating;
         SelRect.Visibility = Visibility.Collapsed;
         WinRect.Visibility = Visibility.Collapsed;
-        RegionCommitted?.Invoke(this);
+        if (!_closed) RegionCommitted?.Invoke(this);
 
         double selLeftDip = (virtualRect.X - _frame.Monitor.Bounds.X) / _sc;
         double selTopDip = (virtualRect.Y - _frame.Monitor.Bounds.Y) / _sc;
@@ -166,8 +175,9 @@ public partial class OverlayWindow : Window
         double selHDip = virtualRect.Height / _sc;
 
         // brighten selection: clip the dim layer to everything EXCEPT the selection
-        Dim.UpdateLayout();
-        var full = new RectangleGeometry(new Rect(0, 0, ActualWidth, ActualHeight));
+        double winWDip = _frame.Monitor.Bounds.Width / _sc;
+        double winHDip = _frame.Monitor.Bounds.Height / _sc;
+        var full = new RectangleGeometry(new Rect(0, 0, winWDip, winHDip));
         var hole = new RectangleGeometry(new Rect(selLeftDip, selTopDip, selWDip, selHDip));
         var grp = new GeometryGroup { FillRule = FillRule.EvenOdd };
         grp.Children.Add(full);
@@ -177,7 +187,7 @@ public partial class OverlayWindow : Window
         // cropped source (monitor-local physical px) for blur sampling
         int lx = (int)(virtualRect.X - _frame.Monitor.Bounds.X);
         int ly = (int)(virtualRect.Y - _frame.Monitor.Bounds.Y);
-        int lw = (int)virtualRect.Width, lh = (int)virtualRect.Height;
+        int lw = Math.Max(1, (int)virtualRect.Width), lh = Math.Max(1, (int)virtualRect.Height);
         var cropped = new CroppedBitmap(_frame.Bitmap, new Int32Rect(lx, ly, lw, lh));
 
         _doc = new AnnotationDocument();
@@ -198,7 +208,7 @@ public partial class OverlayWindow : Window
         _toolbar.UndoRequested += () => { _doc.Undo(); _layer.Refresh(); };
         _toolbar.RedoRequested += () => { _doc.Redo(); _layer.Refresh(); };
         _toolbar.ConfirmRequested += Confirm;
-        _toolbar.CancelRequested += () => Cancelled?.Invoke();
+        _toolbar.CancelRequested += () => RaiseCancelled();
         _toolbar.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         double tbW = _toolbar.DesiredSize.Width;
         double tbLeft = Math.Max(4, Math.Min(selLeftDip, ActualWidth - tbW - 4));
@@ -291,6 +301,7 @@ public partial class OverlayWindow : Window
 
     private void Confirm()
     {
+        if (_closed) return;
         if (_doc != null) Confirmed?.Invoke(_frame, _selVirtual, _doc);
     }
 }
