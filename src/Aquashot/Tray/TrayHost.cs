@@ -23,7 +23,9 @@ public class TrayHost : IDisposable
     private readonly GraphicsCaptureService _capture = new();
     private readonly OutputService _output = new();
     private AppSettings _settings;
-    private bool _capturing;
+    private bool _busy;
+    private Aquashot.Capture.FFmpegRunner? _ffmpeg;
+    private Aquashot.Recording.HardwareEncoderDetector? _encoderDetector;
 
     public TrayHost()
     {
@@ -40,6 +42,7 @@ public class TrayHost : IDisposable
         menu.Items.Add("Capture region", null, (_, __) => StartCapture(OverlayWindow.OverlayMode.Region));
         menu.Items.Add("Capture window", null, (_, __) => StartCapture(OverlayWindow.OverlayMode.Window));
         menu.Items.Add("Capture all monitors", null, (_, __) => CaptureAllMonitors());
+        menu.Items.Add("Record…", null, (_, __) => StartRecording());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Settings…", null, (_, __) => OpenSettings());
         menu.Items.Add("Quit", null, (_, __) => Quit());
@@ -61,8 +64,8 @@ public class TrayHost : IDisposable
 
     private void StartCapture(OverlayWindow.OverlayMode mode)
     {
-        if (_capturing) return;
-        _capturing = true;
+        if (_busy) return;
+        _busy = true;
         OverlayController? ctrl = null;
         try
         {
@@ -70,7 +73,7 @@ public class TrayHost : IDisposable
             ctrl = new OverlayController { Mode = mode };
             ctrl.Confirmed += (f, r, d) =>
             {
-                _capturing = false;
+                _busy = false;
                 try
                 {
                     var path = _output.Save(f, r, d, _settings, DateTime.Now);
@@ -81,21 +84,21 @@ public class TrayHost : IDisposable
                     _icon.ShowBalloonTip(3000, "Aquashot", "Save failed: " + ex.Message, ToolTipIcon.Error);
                 }
             };
-            ctrl.Cancelled += () => _capturing = false;
+            ctrl.Cancelled += () => _busy = false;
             ctrl.Show(frames);
         }
         catch (Exception ex)
         {
             ctrl?.Close();
-            _capturing = false;
+            _busy = false;
             _icon.ShowBalloonTip(3000, "Aquashot", "Capture failed: " + ex.Message, ToolTipIcon.Error);
         }
     }
 
     private void CaptureAllMonitors()
     {
-        if (_capturing) return;
-        _capturing = true;
+        if (_busy) return;
+        _busy = true;
         try
         {
             var frames = _capture.FreezeAll();
@@ -108,7 +111,44 @@ public class TrayHost : IDisposable
         {
             _icon.ShowBalloonTip(3000, "Aquashot", "Capture failed: " + ex.Message, ToolTipIcon.Error);
         }
-        finally { _capturing = false; }
+        finally { _busy = false; }
+    }
+
+    private void StartRecording()
+    {
+        if (_busy) return;
+        try { _ffmpeg ??= new Aquashot.Capture.FFmpegRunner(Aquashot.Capture.FFmpegProvider.Default().EnsureExtracted()); }
+        catch (Exception ex)
+        {
+            _icon.ShowBalloonTip(4000, "Aquashot",
+                "Recording unavailable (ffmpeg not bundled): " + ex.Message, ToolTipIcon.Error);
+            return;
+        }
+        _encoderDetector ??= new Aquashot.Recording.HardwareEncoderDetector(_ffmpeg);
+        _busy = true;
+        try
+        {
+            var ctrl = new Aquashot.Recording.RecordingController(_capture, _ffmpeg, _encoderDetector, _settings);
+            ctrl.Finished += (result, error) =>
+            {
+                _busy = false;
+                if (error != null)
+                    _icon.ShowBalloonTip(3000, "Aquashot", "Record failed: " + error, ToolTipIcon.Error);
+                else if (result != null)
+                {
+                    var note = result.SizeCapForced ? " (reduced to fit 50 MB)" : "";
+                    _icon.ShowBalloonTip(2500, "Aquashot",
+                        "Saved & copied: " + string.Join(", ", result.Files.Select(System.IO.Path.GetFileName)) + note,
+                        ToolTipIcon.Info);
+                }
+            };
+            ctrl.Start();
+        }
+        catch (Exception ex)
+        {
+            _busy = false;
+            _icon.ShowBalloonTip(3000, "Aquashot", "Record failed: " + ex.Message, ToolTipIcon.Error);
+        }
     }
 
     private void OpenSettings()
