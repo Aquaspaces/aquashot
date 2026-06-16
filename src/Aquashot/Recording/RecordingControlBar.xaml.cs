@@ -54,4 +54,10 @@ public partial class RecordingControlBar : Window
     }
 
     private void OnCancelClick(object sender, RoutedEventArgs e) => Cancelled?.Invoke();
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _timer.Stop();
+        base.OnClosed(e);
+    }
 }

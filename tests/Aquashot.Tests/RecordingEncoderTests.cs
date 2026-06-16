@@ -76,4 +76,14 @@ public class RecordingEncoderTests
         res.Files.Should().Contain(f => f.EndsWith(".mp4"));
         res.Files.Should().Contain(f => f.EndsWith(".gif"));
     }
+
+    [Fact]
+    public async Task Mp4_encode_failure_throws()
+    {
+        var runner = new FakeRunner { ExitFor = _ => 1 };
+        var enc = new RecordingEncoder(runner, sizeOf: _ => 1_000_000);
+        var act = async () => await enc.ProduceAsync("mid.mp4", "h264_nvenc", RecordFormats.Mp4,
+            TimeSpan.FromSeconds(10), sourceWidth: 1280, fps: 30, outBase: "out");
+        await act.Should().ThrowAsync<InvalidOperationException>();
+    }
 }
