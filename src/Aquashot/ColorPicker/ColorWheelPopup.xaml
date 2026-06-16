@@ -1,0 +1,22 @@
+<UserControl x:Class="Aquashot.ColorPicker.ColorWheelPopup"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="240">
+  <Border CornerRadius="10" Padding="10" Background="{StaticResource B.Surface}"
+          BorderBrush="{StaticResource B.Border}" BorderThickness="1">
+    <StackPanel>
+      <Grid Height="160">
+        <Border x:Name="SvSquare" CornerRadius="6"/>
+        <Canvas x:Name="SvCanvas" Background="Transparent" ClipToBounds="True">
+          <Ellipse x:Name="SvThumb" Width="14" Height="14" Stroke="White" StrokeThickness="2"/>
+        </Canvas>
+      </Grid>
+      <Slider x:Name="HueSlider" Minimum="0" Maximum="360" Margin="0,8"/>
+      <DockPanel Margin="0,4,0,0">
+        <Rectangle x:Name="Preview" Width="28" Height="28" RadiusX="4" RadiusY="4" DockPanel.Dock="Left"/>
+        <Button x:Name="BtnEyedropper" Style="{StaticResource IconButton}"
+                Tag="{StaticResource Icon.Eyedropper}" DockPanel.Dock="Right" ToolTip="Pick from screen"/>
+        <TextBox x:Name="HexBox" Margin="8,0" VerticalContentAlignment="Center"/>
+      </DockPanel>
+    </StackPanel>
+  </Border>
+</UserControl>
