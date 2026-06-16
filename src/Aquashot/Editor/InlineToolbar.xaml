@@ -24,6 +24,10 @@
             <Border Width="1" Background="{StaticResource B.Border}" Margin="6,5"/>
 
             <StackPanel x:Name="ColorPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
+            <Button x:Name="BtnColorWheel" Style="{StaticResource IconButton}"
+                    Tag="{StaticResource Icon.Palette}" ToolTip="Color wheel"/>
+            <ToggleButton x:Name="ToolEyedropper" Style="{StaticResource IconToggle}"
+                          Tag="{StaticResource Icon.Eyedropper}" ToolTip="Pick a color from the screen"/>
             <Slider x:Name="WidthSlider" Width="84" Minimum="1" Maximum="32" Value="3"
                     VerticalAlignment="Center" Margin="8,0" ToolTip="Size (scroll wheel)"
                     Foreground="{StaticResource B.Accent}"/>
