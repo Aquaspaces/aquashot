@@ -58,6 +58,7 @@ public class TrayHost : IDisposable
         delay.DropDownItems.Add("10 seconds", null, (_, __) => DelayThenCapture(10));
         menu.Items.Add(delay);
 
+        menu.Items.Add("Pick color", null, (_, __) => StartColorPick());
         menu.Items.Add(_recentMenu);
         RebuildRecent();
 
@@ -222,6 +223,33 @@ public class TrayHost : IDisposable
         catch (Exception ex)
         {
             _icon.ShowBalloonTip(2000, "Aquashot", "Open failed: " + ex.Message, ToolTipIcon.Error);
+        }
+    }
+
+    // Eyedropper: freeze the screen, hover to preview, click to copy the pixel's hex.
+    private void StartColorPick()
+    {
+        if (_busy) return;
+        _busy = true;
+        Aquashot.ColorPicker.ColorPickerController? c = null;
+        try
+        {
+            var frames = _capture.FreezeAll();
+            c = new Aquashot.ColorPicker.ColorPickerController();
+            c.Picked += hex =>
+            {
+                _busy = false;
+                try { System.Windows.Clipboard.SetText(hex); } catch { /* clipboard may be locked */ }
+                _icon.ShowBalloonTip(2000, "Aquashot", "Color copied: " + hex, ToolTipIcon.Info);
+            };
+            c.Cancelled += () => _busy = false;
+            c.Show(frames);
+        }
+        catch (Exception ex)
+        {
+            c?.Close();
+            _busy = false;
+            _icon.ShowBalloonTip(3000, "Aquashot", "Color pick failed: " + ex.Message, ToolTipIcon.Error);
         }
     }
 
