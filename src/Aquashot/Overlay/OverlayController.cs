@@ -14,8 +14,10 @@ public class OverlayController
 
     public OverlayWindow.OverlayMode Mode { get; set; } = OverlayWindow.OverlayMode.Region;
 
+    // The headless recording engine the overlay's toolbar drives (set by the tray).
+    public RecordingController? Recorder { get; set; }
+
     public event Action<CapturedFrame, PixelRect, AnnotationDocument>? Confirmed;
-    public event Action<CapturedFrame, PixelRect, RecordFormats>? RecordRequested;
     public event Action? PinRequested;
     public event Action? Cancelled;
 
@@ -23,10 +25,9 @@ public class OverlayController
     {
         foreach (var frame in frames)
         {
-            var w = new OverlayWindow(frame) { Mode = Mode };
+            var w = new OverlayWindow(frame) { Mode = Mode, Recorder = Recorder };
             w.RegionCommitted += CloseOthers;
             w.Confirmed += (f, r, d) => { Close(); Confirmed?.Invoke(f, r, d); };
-            w.RecordRequested += (r, fmt) => { Close(); RecordRequested?.Invoke(frame, r, fmt); };
             w.PinRequested += () => { Close(); PinRequested?.Invoke(); };
             w.Cancelled += () => { Close(); Cancelled?.Invoke(); };
             _windows.Add(w);

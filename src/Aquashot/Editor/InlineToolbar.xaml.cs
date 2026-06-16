@@ -18,7 +18,7 @@ public partial class InlineToolbar : UserControl
     public event Action<ToolKind>? ToolChanged;
     public event Action? UndoRequested;
     public event Action? RedoRequested;
-    public event Action? ConfirmRequested;
+    public event Action? PrimaryClicked; // the right-hand Capture / Record / Stop button
     public event Action? CancelRequested;
     public event Action? PinRequested;
     public event Action<CaptureOutput>? OutputModeChanged;
@@ -54,7 +54,7 @@ public partial class InlineToolbar : UserControl
 
         BtnUndo.Click    += (_, __) => UndoRequested?.Invoke();
         BtnRedo.Click    += (_, __) => RedoRequested?.Invoke();
-        BtnConfirm.Click += (_, __) => ConfirmRequested?.Invoke();
+        BtnPrimary.Click += (_, __) => PrimaryClicked?.Invoke();
         BtnCancel.Click  += (_, __) => CancelRequested?.Invoke();
         BtnPin.Click     += (_, __) => PinRequested?.Invoke();
 
@@ -67,24 +67,25 @@ public partial class InlineToolbar : UserControl
         ModeImage.IsChecked = true;
     }
 
-    // Recording modes capture the live region, so annotation controls don't apply —
-    // disable them when GIF/MP4 is selected. Confirm then starts recording (handled
-    // by the overlay, which reads CurrentOutput).
+    // Annotations stay available in every mode (they get captured into the GIF/MP4 too).
+    // The primary button just relabels: Capture for a screenshot, Record for GIF/MP4.
     private void SetOutput(CaptureOutput o)
     {
         CurrentOutput = o;
-        bool ann = o == CaptureOutput.Image;
-        foreach (var rb in new RadioButton[]
-                 { ToolSelect, ToolArrow, ToolRect, ToolEllipse, ToolLine, ToolPen, ToolText, ToolCounter })
-            rb.IsEnabled = ann;
-        WidthSlider.IsEnabled = ann;
-        FillToggle.IsEnabled = ann;
-        ColorPanel.IsEnabled = ann;
-        BtnUndo.IsEnabled = ann;
-        BtnRedo.IsEnabled = ann;
-        BtnPin.IsEnabled = ann; // pinning only applies to the screenshot (Image) flow
+        SetPrimary(o == CaptureOutput.Image ? "Capture" : "Record",
+                   o == CaptureOutput.Image ? "#3B82F6" : "#E03B3B");
+        BtnPin.IsEnabled = o == CaptureOutput.Image; // pinning only applies to the screenshot flow
         OutputModeChanged?.Invoke(o);
     }
+
+    public void SetPrimary(string text, string hexColor)
+    {
+        BtnPrimary.Content = text;
+        BtnPrimary.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hexColor)!);
+    }
+
+    public void ShowTimer(bool on) => RecTimer.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+    public void SetTimer(string text) => RecTimer.Text = text;
 
     private void BuildSwatches()
     {

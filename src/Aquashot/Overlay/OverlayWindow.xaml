@@ -1,8 +1,8 @@
 <Window x:Class="Aquashot.Overlay.OverlayWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="False"
-        Background="Black" Topmost="True" ShowInTaskbar="False"
+        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True"
+        Background="Transparent" Topmost="True" ShowInTaskbar="False"
         WindowStartupLocation="Manual" Cursor="Cross"
         UseLayoutRounding="True"
         KeyDown="OnKeyDown">
