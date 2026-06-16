@@ -1,0 +1,26 @@
+name: winget
+
+# Publishes each GitHub release to the Windows Package Manager (winget) by opening an
+# update PR against microsoft/winget-pkgs. The package must already exist there — seed
+# the first version manually with `wingetcreate new <installer-url>` (see README/release docs).
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (e.g. v1.0.0)'
+        required: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a full commit SHA (mutable tags can be repointed; this action holds a token).
+      # Bump deliberately via Dependabot/Renovate. 4ffc788 == v2 (2024-11-27).
+      - uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
+        with:
+          identifier: Aquaspaces.Aquashot
+          installers-regex: '-Setup\.exe$'   # the Inno installer only, not the portable exe
+          release-tag: ${{ github.event.inputs.tag || github.ref_name }}
+          token: ${{ secrets.WINGET_TOKEN }}

@@ -40,6 +40,19 @@ jobs:
         shell: pwsh
         run: ./scripts/build-installer.ps1 -Version "${{ steps.ver.outputs.version }}"
 
+      # Portable single-file exe (ffmpeg already fetched into Resources by the step above,
+      # so it's embedded). Compressed to keep the one-file download reasonable.
+      - name: Publish portable single-file exe
+        shell: pwsh
+        run: |
+          dotnet publish src/Aquashot/Aquashot.csproj -c Release -r win-x64 --self-contained `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true -p:Version="${{ steps.ver.outputs.version }}" `
+            -o publish-portable
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item publish-portable/Aquashot.exe "dist/Aquashot-${{ steps.ver.outputs.version }}-portable.exe"
+          Get-ChildItem dist -Filter *.exe | ForEach-Object { "{0}  ({1:N1} MB)" -f $_.Name, ($_.Length/1MB) }
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
@@ -48,10 +61,13 @@ jobs:
           generate_release_notes: true
           files: dist/*.exe
           body: |
-            Windows installer for Aquashot ${{ steps.ver.outputs.version }}.
+            Aquashot ${{ steps.ver.outputs.version }} for Windows. Two downloads:
 
-            **Install:** download `Aquashot-${{ steps.ver.outputs.version }}-Setup.exe` and run it.
-            Self-contained — no .NET runtime needed. Includes FFmpeg for GIF/MP4 recording.
+            - **Installer** — `Aquashot-${{ steps.ver.outputs.version }}-Setup.exe`: download and run.
+            - **Portable** — `Aquashot-${{ steps.ver.outputs.version }}-portable.exe`: single file, just run it (no install).
 
-            > This binary bundles a GPL FFmpeg build and is therefore distributed under the GPL.
+            Both are self-contained — no .NET runtime needed — and bundle FFmpeg for GIF/MP4 recording.
+            (The portable exe still stores settings/history under `%LOCALAPPDATA%\Aquashot`.)
+
+            > These binaries bundle a GPL FFmpeg build and are therefore distributed under the GPL.
             > Aquashot's own source remains WTFPL. See THIRD-PARTY-NOTICES.md.
