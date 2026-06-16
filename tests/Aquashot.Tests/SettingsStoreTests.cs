@@ -26,7 +26,7 @@ public class SettingsStoreTests
     {
         var path = TempFile();
         var store = new SettingsStore(path);
-        var original = store.Load() with { Hotkey = "Ctrl+Alt+S", RunAtStartup = true, SaveFolder = @"C:\Shots", EnableOcr = false, HistoryCap = 250 };
+        var original = store.Load() with { Hotkey = "Ctrl+Alt+S", RunAtStartup = true, SaveFolder = @"C:\Shots", EnableOcr = false, HistoryCap = 250, HistoryThumbSize = 320 };
         store.Save(original);
 
         var reloaded = new SettingsStore(path).Load();
