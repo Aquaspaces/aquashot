@@ -16,4 +16,6 @@ public record AppSettings
     public int RecordFps { get; init; } = 30;
     public string EncoderOverride { get; init; } = "Auto"; // "Auto" or an ffmpeg encoder name
     public string RecordFormats { get; init; } = "Both";   // "Mp4" | "Gif" | "Both"
+    public bool EnableOcr { get; init; } = true;
+    public int HistoryCap { get; init; } = 1000;
 }

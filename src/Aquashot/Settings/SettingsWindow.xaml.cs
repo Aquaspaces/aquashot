@@ -27,6 +27,7 @@ public partial class SettingsWindow : Window
         FormatBox.SelectedIndex =
             string.Equals(current.ImageFormat, "jpg", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
         StartupCheck.IsChecked = current.RunAtStartup;
+        EnableOcrCheck.IsChecked = current.EnableOcr;
         UpdatePreview();
     }
 
@@ -84,7 +85,8 @@ public partial class SettingsWindow : Window
             SaveFolder = FolderBox.Text,
             FilenamePattern = PatternBox.Text,
             ImageFormat = SelectedFormat(),
-            RunAtStartup = StartupCheck.IsChecked == true
+            RunAtStartup = StartupCheck.IsChecked == true,
+            EnableOcr = EnableOcrCheck.IsChecked == true
         };
 
         var reg = new StartupRegistration("Aquashot", Environment.ProcessPath ?? "");
