@@ -35,8 +35,14 @@
             <Button x:Name="BtnUndo"    Style="{StaticResource IconButton}" Tag="{StaticResource Icon.Undo}"  ToolTip="Undo (Ctrl+Z)"/>
             <Button x:Name="BtnRedo"    Style="{StaticResource IconButton}" Tag="{StaticResource Icon.Redo}"  ToolTip="Redo (Ctrl+Y)"/>
             <Button x:Name="BtnPin"     Style="{StaticResource IconButton}" Tag="{StaticResource Icon.Pin}"   ToolTip="Pin to screen (floating, always on top)"/>
-            <Button x:Name="BtnConfirm" Style="{StaticResource IconButton}" Tag="{StaticResource Icon.Check}"
-                    Foreground="{StaticResource B.Success}" ToolTip="Copy &amp; save (Enter / Ctrl+C)"/>
+
+            <Border Width="1" Background="{StaticResource B.Border}" Margin="6,5"/>
+
+            <TextBlock x:Name="RecTimer" Text="00:00" Visibility="Collapsed" Margin="4,0,8,0"
+                       VerticalAlignment="Center" FontFamily="Consolas" FontSize="14"
+                       Foreground="{StaticResource B.Text}"/>
+            <Button x:Name="BtnPrimary" Style="{StaticResource ModernButton}" Content="Capture"
+                    Margin="2,1" ToolTip="Capture / Record (Enter)"/>
             <Button x:Name="BtnCancel"  Style="{StaticResource IconButton}" Tag="{StaticResource Icon.X}"
                     Foreground="{StaticResource B.Danger}" ToolTip="Cancel (Esc)"/>
         </StackPanel>

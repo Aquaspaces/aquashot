@@ -8,88 +8,82 @@ using Aquashot.Settings;
 
 namespace Aquashot.Recording;
 
-// Drives a recording of an already-selected region: shows a click-through border around
-// the region plus an inline Record/Stop bar, captures the live screen via ffmpeg, then
-// finalizes to the chosen format(s).
+// Headless recording engine driven by the capture overlay's toolbar (no windows of its
+// own). Captures the live region via gdigrab — anything the overlay paints inside the
+// region (annotations) is captured too; the toolbar sits outside the region so it isn't.
 public class RecordingController
 {
-    private readonly IFFmpegRunner _runner;
-    private readonly HardwareEncoderDetector _detector;
     private readonly AppSettings _settings;
+    private IFFmpegRunner? _runner;
+    private HardwareEncoderDetector? _detector;
 
-    private BorderOverlay? _border;
-    private RecordingControlBar? _bar;
     private IFFmpegSession? _session;
     private string _intermediate = "";
     private string _encoderName = "libx264";
     private PixelRect _region;
-    private double _scale = 1.0;
     private RecordFormats _formats = RecordFormats.Mp4;
     private DateTime _startedUtc;
     private bool _stopping;
 
-    // result (null on cancel/error), error (null on success/cancel)
+    // result (null on error), error (null on success)
     public event Action<RecordResult?, string?>? Finished;
 
-    public RecordingController(IFFmpegRunner runner, HardwareEncoderDetector detector, AppSettings settings)
+    public RecordingController(AppSettings settings) => _settings = settings;
+
+    public TimeSpan Elapsed => DateTime.UtcNow - _startedUtc;
+
+    private bool EnsureFfmpeg(out string? error)
     {
-        _runner = runner; _detector = detector; _settings = settings;
+        error = null;
+        try
+        {
+            _runner ??= new FFmpegRunner(FFmpegProvider.Default().EnsureExtracted());
+            _detector ??= new HardwareEncoderDetector(_runner);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = "Recording unavailable (ffmpeg not bundled): " + ex.Message;
+            return false;
+        }
     }
 
-    // Begin recording the given virtual-desktop region on the given monitor.
-    public void StartRegion(PixelRect region, MonitorInfo monitor, RecordFormats formats)
+    // Warm encoder detection ahead of the Record click so capture starts instantly.
+    public void Prewarm()
     {
-        _region = region; _scale = monitor.DpiScale; _formats = formats;
-        // Pre-warm encoder detection (test-encode probe) now, so pressing Record starts
-        // capture immediately instead of stalling ~1s. Cached.
-        _ = _detector.DetectAsync(_settings.EncoderOverride == "Auto" ? null : _settings.EncoderOverride);
-
-        _border = new BorderOverlay(region, monitor.Bounds, _scale);
-        _border.Show();
-
-        _bar = new RecordingControlBar();
-        _bar.Place(BarLeftDip(monitor), BarTopDip(monitor));
-        _bar.Cancelled += () => { CloseChrome(); Finished?.Invoke(null, null); };
-        _bar.RecordStarted += OnRecordStarted;
-        _bar.Stopped += () => _ = OnStoppedAsync();
-        _bar.Show();
+        if (EnsureFfmpeg(out _))
+            _ = _detector!.DetectAsync(_settings.EncoderOverride == "Auto" ? null : _settings.EncoderOverride);
     }
 
-    // Just below the selection, clamped above it if there's no room at the bottom.
-    private double BarLeftDip(MonitorInfo m) => Math.Max(m.Bounds.X / _scale, _region.X / _scale);
-    private double BarTopDip(MonitorInfo m)
+    // Start capturing the region. Returns null on success, or an error message.
+    public async Task<string?> StartAsync(PixelRect region, RecordFormats formats)
     {
-        double below = (_region.Y + _region.Height) / _scale + 12;
-        double monBottom = (m.Bounds.Y + m.Bounds.Height) / _scale;
-        return below + 64 > monBottom ? Math.Max(m.Bounds.Y / _scale, _region.Y / _scale - 64) : below;
-    }
+        if (!EnsureFfmpeg(out var err)) return err;
+        _region = region;
+        _formats = formats;
+        _stopping = false;
 
-    private async void OnRecordStarted()
-    {
-        var encoder = (await _detector.DetectAsync(
+        var encoder = (await _detector!.DetectAsync(
             _settings.EncoderOverride == "Auto" ? null : _settings.EncoderOverride))?.Name ?? "libx264";
-        if (_stopping) return; // user already pressed Stop during detection — don't start an orphan capture
+        if (_stopping) return null;
         _encoderName = encoder;
         _intermediate = Path.Combine(Path.GetTempPath(), "aqua-rec-" + Guid.NewGuid().ToString("N") + ".mp4");
         _startedUtc = DateTime.UtcNow;
-        // gdigrab is the universal path; ddagrab auto-selection is a future enhancement (see design).
-        var args = FFmpegArgs.CaptureGdigrab(_region, _settings.RecordFps, encoder, _intermediate);
-        _session = _runner.StartCapture(args);
-        _bar?.BeginTimer(); // start the clock when capture actually begins
+        _session = _runner!.StartCapture(FFmpegArgs.CaptureGdigrab(region, _settings.RecordFps, encoder, _intermediate));
+        return null;
     }
 
-    private async Task OnStoppedAsync()
+    public async Task StopAsync()
     {
         _stopping = true;
         try
         {
             var duration = DateTime.UtcNow - _startedUtc;
             var capResult = _session == null ? null : await _session.StopAsync();
-            CloseChrome();
             if (capResult is { Ok: false })
             { Finished?.Invoke(null, "Capture failed: " + Tail(capResult.StderrTail)); Cleanup(); return; }
 
-            var encoder = new RecordingEncoder(_runner);
+            var encoder = new RecordingEncoder(_runner!);
             var outBase = OutputService.RecordingOutputBase(_settings, DateTime.Now);
             var result = await encoder.ProduceAsync(_intermediate, _encoderName,
                 _formats, duration, (int)_region.Width, _settings.RecordFps, outBase);
@@ -99,14 +93,6 @@ public class RecordingController
         }
         catch (Exception ex) { Finished?.Invoke(null, ex.Message); }
         finally { Cleanup(); }
-    }
-
-    private void CloseChrome()
-    {
-        _bar?.Close();
-        _border?.Close();
-        _bar = null;
-        _border = null;
     }
 
     private void Cleanup()

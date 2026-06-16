@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -67,9 +68,14 @@ public partial class OverlayWindow : Window
 
     public OverlayMode Mode { get; set; } = OverlayMode.Region;
 
+    // Set by OverlayController before the window is shown; drives in-toolbar recording.
+    public RecordingController? Recorder { get; set; }
+    private bool _recording;
+    private readonly System.Windows.Threading.DispatcherTimer _recTimer =
+        new() { Interval = TimeSpan.FromSeconds(1) };
+
     public event Action<OverlayWindow>? RegionCommitted;
     public event Action<CapturedFrame, PixelRect, AnnotationDocument>? Confirmed;
-    public event Action<PixelRect, RecordFormats>? RecordRequested;
     public event Action? PinRequested;
     public event Action? Cancelled;
 
@@ -184,11 +190,16 @@ public partial class OverlayWindow : Window
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape) { RaiseCancelled(); return; }
+        if (e.Key == Key.Escape)
+        {
+            if (_recording) { OnPrimary(); return; } // Esc stops & finalizes a recording
+            RaiseCancelled();
+            return;
+        }
         if (_phase == Phase.Annotating)
         {
-            if (e.Key == Key.Enter) Confirm();
-            else if (e.Key == Key.C && (Keyboard.Modifiers & ModifierKeys.Control) != 0) Confirm();
+            if (e.Key == Key.Enter) OnPrimary();
+            else if (e.Key == Key.C && (Keyboard.Modifiers & ModifierKeys.Control) != 0) OnPrimary();
             else if (e.Key == Key.Z && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc!.Undo(); ClearSelection(); _layer!.Refresh(); }
             else if (e.Key == Key.Y && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc!.Redo(); ClearSelection(); _layer!.Refresh(); }
             else if ((e.Key == Key.Delete || e.Key == Key.Back) && _selectedIndex >= 0)
@@ -277,10 +288,10 @@ public partial class OverlayWindow : Window
         _toolbar = new InlineToolbar();
         _toolbar.UndoRequested += () => { _doc.Undo(); ClearSelection(); _layer.Refresh(); };
         _toolbar.RedoRequested += () => { _doc.Redo(); ClearSelection(); _layer.Refresh(); };
-        _toolbar.ConfirmRequested += Confirm;
+        _toolbar.PrimaryClicked += OnPrimary;
         _toolbar.CancelRequested += RaiseCancelled;
         _toolbar.ToolChanged += OnToolChanged;
-        _toolbar.OutputModeChanged += OnOutputMode;
+        _toolbar.OutputModeChanged += OnModeSelected;
         _toolbar.PinRequested += OnPin;
         Overlay.Children.Add(_toolbar);
 
@@ -581,13 +592,67 @@ public partial class OverlayWindow : Window
         _layer.Refresh();
     }
 
-    // Picking GIF/MP4 in the toolbar starts recording the selected region immediately —
-    // the Record/Stop bar appears inline (no Confirm press needed).
-    private void OnOutputMode(CaptureOutput o)
+    // Selecting GIF/MP4 just warms the encoder so the eventual Record click is instant.
+    private void OnModeSelected(CaptureOutput o)
     {
-        if (_closed || o == CaptureOutput.Image) return;
-        var fmt = o == CaptureOutput.Gif ? RecordFormats.Gif : RecordFormats.Mp4;
-        RecordRequested?.Invoke(_selVirtual, fmt);
+        if (o != CaptureOutput.Image) Recorder?.Prewarm();
+    }
+
+    // The single right-hand button: Capture (save screenshot), Record (start), or Stop.
+    private void OnPrimary()
+    {
+        if (_closed || _doc == null) return;
+        if (_recording) { _ = StopRecordingAsync(); return; }
+        if (_toolbar!.CurrentOutput == CaptureOutput.Image)
+        {
+            Confirmed?.Invoke(_frame, _selVirtual, _doc);
+            return;
+        }
+        _ = StartRecordingAsync();
+    }
+
+    // Switch the overlay to live-recording chrome: hide the frozen backdrop + selection
+    // gizmos so the real screen shows through inside the region. The annotation layer and
+    // dashed border stay (painted over the region → captured into the recording); the
+    // toolbar sits below the region, outside gdigrab's capture rect.
+    private async Task StartRecordingAsync()
+    {
+        if (Recorder == null) return;
+        var fmt = _toolbar!.CurrentOutput == CaptureOutput.Gif ? RecordFormats.Gif : RecordFormats.Mp4;
+
+        FrozenImage.Visibility = Visibility.Collapsed;
+        Dim.Visibility = Visibility.Collapsed;
+        DimLabel.Visibility = Visibility.Collapsed;
+        foreach (var h in _handles) h.Visibility = Visibility.Collapsed;
+        if (_moveBand != null) _moveBand.Visibility = Visibility.Collapsed;
+        if (_selBorder != null) _selBorder.Visibility = Visibility.Collapsed; // sits on the capture edge
+        ClearSelection();
+        _layer!.Refresh();
+
+        var err = await Recorder.StartAsync(_selVirtual, fmt);
+        if (err != null) { if (!_closed) Close(); return; } // recorder surfaces the error via Finished
+
+        _recording = true;
+        _toolbar.SetPrimary("Stop", "#E03B3B");
+        _toolbar.ShowTimer(true);
+        _toolbar.SetTimer("00:00");
+        _recTimer.Tick += OnRecTick;
+        _recTimer.Start();
+    }
+
+    private void OnRecTick(object? sender, EventArgs e)
+    {
+        var t = Recorder!.Elapsed;
+        _toolbar!.SetTimer($"{(int)t.TotalMinutes:00}:{t.Seconds:00}");
+    }
+
+    private async Task StopRecordingAsync()
+    {
+        _recTimer.Stop();
+        _recTimer.Tick -= OnRecTick;
+        _recording = false;
+        if (Recorder != null) await Recorder.StopAsync();
+        if (!_closed) Close();
     }
 
     // Compose the annotated region into a bitmap and float it on screen as a pin,
@@ -604,18 +669,6 @@ public partial class OverlayWindow : Window
         };
         pin.Show();
         PinRequested?.Invoke();
-    }
-
-    private void Confirm()
-    {
-        if (_closed || _doc == null) return;
-        if (_toolbar != null && _toolbar.CurrentOutput != CaptureOutput.Image)
-        {
-            var fmt = _toolbar.CurrentOutput == CaptureOutput.Gif ? RecordFormats.Gif : RecordFormats.Mp4;
-            RecordRequested?.Invoke(_selVirtual, fmt);
-            return;
-        }
-        Confirmed?.Invoke(_frame, _selVirtual, _doc);
     }
 
     private void RaiseCancelled()

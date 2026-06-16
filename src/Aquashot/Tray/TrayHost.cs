@@ -29,8 +29,6 @@ public class TrayHost : IDisposable
     private readonly OutputService _output = new();
     private AppSettings _settings;
     private bool _busy;
-    private Aquashot.Capture.FFmpegRunner? _ffmpeg;
-    private Aquashot.Recording.HardwareEncoderDetector? _encoderDetector;
     private readonly RecentCaptures _recent;
     private readonly ToolStripMenuItem _recentMenu = new("Recent");
     private readonly Aquashot.Freeze.FreezeController _freeze = new();
@@ -132,8 +130,25 @@ public class TrayHost : IDisposable
             };
             ctrl.Cancelled += () => _busy = false;
             ctrl.PinRequested += () => _busy = false; // pinned to screen; capture flow is done
-            // Recording chosen in the capture toolbar: overlay closes, recording owns _busy.
-            ctrl.RecordRequested += (f, r, fmt) => StartRecording(f, r, fmt);
+
+            // Recording is driven inline by the capture toolbar; the recorder owns _busy
+            // until it finishes (or errors).
+            var recorder = new Aquashot.Recording.RecordingController(_settings);
+            recorder.Finished += (result, error) =>
+            {
+                _busy = false;
+                if (error != null)
+                    _icon.ShowBalloonTip(3000, "Aquashot", error, ToolTipIcon.Error);
+                else if (result != null)
+                {
+                    foreach (var file in result.Files) Remember(file);
+                    var note = result.SizeCapForced ? " (reduced to fit 50 MB)" : "";
+                    _icon.ShowBalloonTip(2500, "Aquashot",
+                        "Saved & copied: " + string.Join(", ", result.Files.Select(Path.GetFileName)) + note,
+                        ToolTipIcon.Info);
+                }
+            };
+            ctrl.Recorder = recorder;
             ctrl.Show(frames);
         }
         catch (Exception ex)
@@ -162,45 +177,6 @@ public class TrayHost : IDisposable
             _icon.ShowBalloonTip(3000, "Aquashot", "Capture failed: " + ex.Message, ToolTipIcon.Error);
         }
         finally { _busy = false; }
-    }
-
-    // Started from the capture overlay when the user picks GIF/MP4 for the selected region.
-    // _busy is already true (set by StartCapture); recording owns it until Finished.
-    private void StartRecording(CapturedFrame frame, PixelRect region, Aquashot.Recording.RecordFormats formats)
-    {
-        try { _ffmpeg ??= new Aquashot.Capture.FFmpegRunner(Aquashot.Capture.FFmpegProvider.Default().EnsureExtracted()); }
-        catch (Exception ex)
-        {
-            _busy = false;
-            _icon.ShowBalloonTip(4000, "Aquashot",
-                "Recording unavailable (ffmpeg not bundled): " + ex.Message, ToolTipIcon.Error);
-            return;
-        }
-        _encoderDetector ??= new Aquashot.Recording.HardwareEncoderDetector(_ffmpeg);
-        try
-        {
-            var rec = new Aquashot.Recording.RecordingController(_ffmpeg, _encoderDetector, _settings);
-            rec.Finished += (result, error) =>
-            {
-                _busy = false;
-                if (error != null)
-                    _icon.ShowBalloonTip(3000, "Aquashot", "Record failed: " + error, ToolTipIcon.Error);
-                else if (result != null)
-                {
-                    foreach (var file in result.Files) Remember(file);
-                    var note = result.SizeCapForced ? " (reduced to fit 50 MB)" : "";
-                    _icon.ShowBalloonTip(2500, "Aquashot",
-                        "Saved & copied: " + string.Join(", ", result.Files.Select(Path.GetFileName)) + note,
-                        ToolTipIcon.Info);
-                }
-            };
-            rec.StartRegion(region, frame.Monitor, formats);
-        }
-        catch (Exception ex)
-        {
-            _busy = false;
-            _icon.ShowBalloonTip(3000, "Aquashot", "Record failed: " + ex.Message, ToolTipIcon.Error);
-        }
     }
 
     // Capture the same region again after a short delay — handy for grabbing menus,
