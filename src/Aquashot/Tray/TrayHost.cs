@@ -144,7 +144,7 @@ public class TrayHost : IDisposable
                         ToolTipIcon.Info);
                 }
             };
-            rec.StartRegion(region, frame.Monitor.DpiScale, formats);
+            rec.StartRegion(region, frame.Monitor, formats);
         }
         catch (Exception ex)
         {

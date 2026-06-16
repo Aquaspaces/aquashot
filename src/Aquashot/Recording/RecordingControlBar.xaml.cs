@@ -2,6 +2,8 @@ using System;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 
 namespace Aquashot.Recording;
@@ -34,22 +36,42 @@ public partial class RecordingControlBar : Window
         base.OnSourceInitialized(e);
         var hwnd = new WindowInteropHelper(this).Handle;
         SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+        PlayExpand();
     }
 
-    // Place the bar just above the region (DIP coordinates).
-    public void PlaceAbove(double leftDip, double topDip)
+    // Smooth expand: grow vertically from the top edge + fade in.
+    private void PlayExpand()
+    {
+        var scale = new ScaleTransform(1, 0.6);
+        Root.RenderTransform = scale;
+        Root.Opacity = 0;
+        var dur = TimeSpan.FromMilliseconds(150);
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.6, 1, dur) { EasingFunction = ease });
+        Root.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, dur));
+    }
+
+    // Absolute placement in DIP (controller computes the spot below the selection).
+    public void Place(double leftDip, double topDip)
     {
         Left = leftDip;
-        Top = Math.Max(0, topDip - 48);
+        Top = topDip;
+    }
+
+    // Started by the controller the moment capture actually begins, so the clock is
+    // aligned with the recording rather than the button press.
+    public void BeginTimer()
+    {
+        _startedUtc = DateTime.UtcNow;
+        _timer.Start();
     }
 
     private void OnRecordClick(object sender, RoutedEventArgs e)
     {
         if (_recording) { Stopped?.Invoke(); return; }
         _recording = true;
-        _startedUtc = DateTime.UtcNow;
-        _timer.Start();
         RecordBtn.Content = "■ Stop";
+        RecordBtn.Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3A, 0x3D, 0x42));
         RecordStarted?.Invoke();
     }
 

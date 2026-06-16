@@ -3,14 +3,17 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ShowInTaskbar="False" Topmost="True" ResizeMode="NoResize" SizeToContent="WidthAndHeight">
-    <Border Background="#FF202225" CornerRadius="8" Padding="8" BorderBrush="#FF3A3D42" BorderThickness="1">
+    <Border x:Name="Root" CornerRadius="10" Padding="6" Background="{StaticResource B.Surface}"
+            BorderBrush="{StaticResource B.Border}" BorderThickness="1" RenderTransformOrigin="0.5,0">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="18" ShadowDepth="2" Opacity="0.5" Color="#000000"/>
+        </Border.Effect>
         <StackPanel Orientation="Horizontal">
-            <Button x:Name="RecordBtn" Content="● Record" Click="OnRecordClick"
-                    Foreground="White" Background="#FFE03B3B" Padding="10,4" BorderThickness="0"/>
-            <TextBlock x:Name="Timer" Text="00:00" Foreground="White" Margin="10,0"
-                       VerticalAlignment="Center" FontFamily="Consolas"/>
-            <Button x:Name="CancelBtn" Content="✕" Click="OnCancelClick"
-                    Foreground="White" Background="#FF3A3D42" Padding="8,4" BorderThickness="0"/>
+            <Button x:Name="RecordBtn" Click="OnRecordClick" Style="{StaticResource ModernButton}"
+                    Background="#E03B3B" Content="● Record"/>
+            <TextBlock x:Name="Timer" Text="00:00" Margin="12,0,10,0" VerticalAlignment="Center"
+                       FontFamily="Consolas" FontSize="14" Foreground="{StaticResource B.Text}"/>
+            <Button x:Name="CancelBtn" Click="OnCancelClick" Style="{StaticResource GhostButton}" Content="Cancel"/>
         </StackPanel>
     </Border>
 </Window>
