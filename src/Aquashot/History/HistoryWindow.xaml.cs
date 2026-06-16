@@ -73,18 +73,25 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         _filtered = _lib.Search(query).Select(e => new Tile(
             e.Path, Path.GetFileName(e.Path), e.CapturedAt.ToString("g"), Thumb(e.Path))).ToList();
         Grid.ItemsSource = _filtered;
+        // Rebuilding the list can leave _detailIndex past the end (e.g. user searches while the
+        // detail panel is open). Drop back to the grid rather than indexing out of range.
+        if (DetailPanel.Visibility == Visibility.Visible && _detailIndex >= _filtered.Count)
+            CloseDetail();
     }
 
     private static BitmapImage? Thumb(string path)
     {
         try
         {
+            // OnLoad reads the file fully and releases the handle, so a later Delete won't fail
+            // with "file in use". DecodePixelWidth keeps memory/CPU modest at the larger preview size.
             var bi = new BitmapImage();
             bi.BeginInit();
             bi.UriSource = new Uri(path);
             bi.DecodePixelWidth = 480;
-            bi.CacheOption = BitmapCacheOption.Default;
+            bi.CacheOption = BitmapCacheOption.OnLoad;
             bi.EndInit();
+            bi.Freeze();
             return bi;
         }
         catch { return null; }
@@ -109,6 +116,7 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         _detailIndex = index;
         var tile = _filtered[index];
         DetailTitle.Text = $"{tile.Name}   {tile.Date}";
+        Grid.Visibility = Visibility.Collapsed; // hide the gallery so it can't take focus/clicks
         DetailPanel.Visibility = Visibility.Visible;
 
         try
@@ -140,6 +148,7 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
     private void CloseDetail()
     {
         DetailPanel.Visibility = Visibility.Collapsed;
+        Grid.Visibility = Visibility.Visible;
         _detailIndex = -1;
     }
 
@@ -159,7 +168,7 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
 
     private void CopyCurrentImage()
     {
-        if (_detailIndex < 0) return;
+        if (_detailIndex < 0 || _detailIndex >= _filtered.Count) return;
         var path = _filtered[_detailIndex].Path;
         try
         {
