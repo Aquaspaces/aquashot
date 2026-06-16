@@ -66,4 +66,26 @@ public class OutputService
             catch (ExternalException) when (attempt < 8) { Thread.Sleep(60); }
         }
     }
+
+    // Folder + filename stem (no extension) for a recording, e.g. ...\Screenshots\Clip_2026
+    public static string RecordingOutputBase(AppSettings settings, DateTime now)
+    {
+        Directory.CreateDirectory(settings.SaveFolder);
+        // Reuse the screenshot stem generator but strip the placeholder extension it appends.
+        var name = FilenameGenerator.Generate(settings.FilenamePattern, "tmp", now);
+        if (name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+            name = name[..^4];
+        return Path.Combine(settings.SaveFolder, name);
+    }
+
+    // Put the produced file on the clipboard as a file-drop (paste into Discord/Explorer).
+    public static void CopyFileToClipboard(string path)
+    {
+        var paths = new System.Collections.Specialized.StringCollection { path };
+        for (int attempt = 0; ; attempt++)
+        {
+            try { Clipboard.SetFileDropList(paths); return; }
+            catch (ExternalException) when (attempt < 8) { Thread.Sleep(60); }
+        }
+    }
 }

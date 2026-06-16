@@ -73,6 +73,15 @@ public class OutputServiceTests
         ContainsAscii(bytes, "tIME").Should().BeFalse();
     }
 
+    [Fact]
+    public void RecordingOutputPath_uses_pattern_and_extension()
+    {
+        var settings = new Aquashot.Settings.AppSettings { FilenamePattern = "Clip_{yyyy}" };
+        var path = OutputService.RecordingOutputBase(settings, new System.DateTime(2026, 1, 2));
+        path.Should().EndWith("Clip_2026");
+        System.IO.Path.IsPathRooted(path).Should().BeTrue();
+    }
+
     private static bool ContainsAscii(byte[] hay, string ascii)
     {
         var needle = System.Text.Encoding.ASCII.GetBytes(ascii);
