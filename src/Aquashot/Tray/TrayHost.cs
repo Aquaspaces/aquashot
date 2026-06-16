@@ -43,7 +43,7 @@ public class TrayHost : IDisposable
 
         _icon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = LoadAppIcon(),
             Visible = true,
             Text = "Aquashot"
         };
@@ -271,6 +271,21 @@ public class TrayHost : IDisposable
     {
         Dispose();
         Application.Current.Shutdown();
+    }
+
+    // The app icon, loaded from the embedded WPF resource (same .ico as the exe icon).
+    // Falls back to the system icon if the resource can't be loaded.
+    private static System.Drawing.Icon LoadAppIcon()
+    {
+        try
+        {
+            var info = Application.GetResourceStream(
+                new Uri("pack://application:,,,/Resources/aquashot.ico"));
+            if (info?.Stream is { } s)
+                using (s) return new System.Drawing.Icon(s, new System.Drawing.Size(32, 32));
+        }
+        catch { /* fall through to system icon */ }
+        return SystemIcons.Application;
     }
 
     public void Dispose()
