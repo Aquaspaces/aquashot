@@ -28,11 +28,11 @@ public readonly record struct HsvColor(double H, double S, double V)
 
     public (byte r, byte g, byte b) ToRgb()
     {
+        double h = ((H % 360) + 360) % 360;
         double c = V * S;
-        double x = c * (1 - Math.Abs(((H / 60.0) % 2) - 1));
+        double x = c * (1 - Math.Abs(((h / 60.0) % 2) - 1));
         double m = V - c;
         double r1 = 0, g1 = 0, b1 = 0;
-        double h = ((H % 360) + 360) % 360;
         if      (h < 60)  { r1 = c; g1 = x; }
         else if (h < 120) { r1 = x; g1 = c; }
         else if (h < 180) { g1 = c; b1 = x; }
