@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Aquashot.Annotation;
 using Aquashot.Capture;
+using Aquashot.Recording;
 using Aquashot.Selection;
 
 namespace Aquashot.Overlay;
@@ -14,6 +15,7 @@ public class OverlayController
     public OverlayWindow.OverlayMode Mode { get; set; } = OverlayWindow.OverlayMode.Region;
 
     public event Action<CapturedFrame, PixelRect, AnnotationDocument>? Confirmed;
+    public event Action<CapturedFrame, PixelRect, RecordFormats>? RecordRequested;
     public event Action? Cancelled;
 
     public void Show(IReadOnlyList<CapturedFrame> frames)
@@ -23,6 +25,7 @@ public class OverlayController
             var w = new OverlayWindow(frame) { Mode = Mode };
             w.RegionCommitted += CloseOthers;
             w.Confirmed += (f, r, d) => { Close(); Confirmed?.Invoke(f, r, d); };
+            w.RecordRequested += (r, fmt) => { Close(); RecordRequested?.Invoke(frame, r, fmt); };
             w.Cancelled += () => { Close(); Cancelled?.Invoke(); };
             _windows.Add(w);
             w.Show();

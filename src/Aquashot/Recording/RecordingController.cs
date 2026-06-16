@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
 using Aquashot.Capture;
 using Aquashot.Output;
@@ -9,54 +8,36 @@ using Aquashot.Settings;
 
 namespace Aquashot.Recording;
 
+// Drives a recording of an already-selected region: shows the Record/Stop bar over the
+// region, captures the live screen via ffmpeg, then finalizes to the chosen format(s).
 public class RecordingController
 {
-    private readonly ICaptureService _capture;
     private readonly IFFmpegRunner _runner;
     private readonly HardwareEncoderDetector _detector;
     private readonly AppSettings _settings;
 
-    private RecordOverlay? _overlay;
     private RecordingControlBar? _bar;
     private IFFmpegSession? _session;
     private string _intermediate = "";
     private string _encoderName = "libx264";
     private PixelRect _region;
+    private double _scale = 1.0;
+    private RecordFormats _formats = RecordFormats.Mp4;
     private DateTime _startedUtc;
     private bool _stopping;
 
-    // files (null on cancel/error), error (null on success/cancel)
+    // result (null on cancel/error), error (null on success/cancel)
     public event Action<RecordResult?, string?>? Finished;
 
-    public RecordingController(ICaptureService capture, IFFmpegRunner runner,
-        HardwareEncoderDetector detector, AppSettings settings)
+    public RecordingController(IFFmpegRunner runner, HardwareEncoderDetector detector, AppSettings settings)
     {
-        _capture = capture; _runner = runner; _detector = detector; _settings = settings;
+        _runner = runner; _detector = detector; _settings = settings;
     }
 
-    private static RecordFormats ParseFormats(string s) => s switch
+    // Begin recording the given virtual-desktop region (scale = its monitor's DPI scale).
+    public void StartRegion(PixelRect region, double scale, RecordFormats formats)
     {
-        "Mp4" => RecordFormats.Mp4,
-        "Gif" => RecordFormats.Gif,
-        _ => RecordFormats.Both,
-    };
-
-    public void Start()
-    {
-        var frame = _capture.FreezeAll().First();
-        _overlay = new RecordOverlay(frame);
-        _overlay.Cancelled += () => { _overlay?.Close(); Finished?.Invoke(null, null); };
-        _overlay.RegionSelected += region =>
-        {
-            _overlay?.Close();
-            _region = region;
-            ShowBar(frame.Monitor.DpiScale, region);
-        };
-        _overlay.Show();
-    }
-
-    private void ShowBar(double scale, PixelRect region)
-    {
+        _region = region; _scale = scale; _formats = formats;
         _bar = new RecordingControlBar();
         _bar.PlaceAbove(region.X / scale, region.Y / scale);
         _bar.Cancelled += () => { _bar?.Close(); Finished?.Invoke(null, null); };
@@ -92,8 +73,7 @@ public class RecordingController
             var encoder = new RecordingEncoder(_runner);
             var outBase = OutputService.RecordingOutputBase(_settings, DateTime.Now);
             var result = await encoder.ProduceAsync(_intermediate, _encoderName,
-                ParseFormats(_settings.RecordFormats), duration,
-                (int)_region.Width, _settings.RecordFps, outBase);
+                _formats, duration, (int)_region.Width, _settings.RecordFps, outBase);
 
             foreach (var f in result.Files) OutputService.CopyFileToClipboard(f); // last wins on clipboard
             Finished?.Invoke(result, null);
