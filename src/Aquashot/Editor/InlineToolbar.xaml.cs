@@ -61,6 +61,7 @@ public partial class InlineToolbar : UserControl
         BtnPin.Click     += (_, __) => PinRequested?.Invoke();
         ToolEyedropper.Checked += (_, __) => EyedropperRequested?.Invoke();
         BtnColorWheel.Click    += (_, __) => ColorWheelRequested?.Invoke();
+        ColorWheelRequested += ShowColorWheel;
 
         ModeImage.Checked += (_, __) => SetOutput(CaptureOutput.Image);
         ModeGif.Checked   += (_, __) => SetOutput(CaptureOutput.Gif);
@@ -138,5 +139,27 @@ public partial class InlineToolbar : UserControl
     {
         CurrentTool = t;
         ToolChanged?.Invoke(t);
+    }
+
+    private System.Windows.Controls.Primitives.Popup? _wheelPopup;
+    private Aquashot.ColorPicker.ColorWheelPopup? _wheelPopupView;
+
+    private void ShowColorWheel()
+    {
+        if (_wheelPopup == null)
+        {
+            var view = new Aquashot.ColorPicker.ColorWheelPopup();
+            view.ColorChosen += SetColor;
+            view.EyedropperRequested += () => EyedropperRequested?.Invoke();
+            _wheelPopup = new System.Windows.Controls.Primitives.Popup
+            {
+                Child = view, StaysOpen = false, AllowsTransparency = true,
+                PlacementTarget = BtnColorWheel,
+                Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom,
+            };
+            _wheelPopupView = view;
+        }
+        _wheelPopupView!.SetColor(CurrentColor);
+        _wheelPopup.IsOpen = true;
     }
 }
