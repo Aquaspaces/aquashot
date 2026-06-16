@@ -104,6 +104,7 @@ public class TrayHost : IDisposable
                 }
             };
             ctrl.Cancelled += () => _busy = false;
+            ctrl.PinRequested += () => _busy = false; // pinned to screen; capture flow is done
             // Recording chosen in the capture toolbar: overlay closes, recording owns _busy.
             ctrl.RecordRequested += (f, r, fmt) => StartRecording(f, r, fmt);
             ctrl.Show(frames);

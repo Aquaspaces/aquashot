@@ -20,6 +20,7 @@ public partial class InlineToolbar : UserControl
     public event Action? RedoRequested;
     public event Action? ConfirmRequested;
     public event Action? CancelRequested;
+    public event Action? PinRequested;
     public event Action<CaptureOutput>? OutputModeChanged;
 
     public CaptureOutput CurrentOutput { get; private set; } = CaptureOutput.Image;
@@ -55,6 +56,7 @@ public partial class InlineToolbar : UserControl
         BtnRedo.Click    += (_, __) => RedoRequested?.Invoke();
         BtnConfirm.Click += (_, __) => ConfirmRequested?.Invoke();
         BtnCancel.Click  += (_, __) => CancelRequested?.Invoke();
+        BtnPin.Click     += (_, __) => PinRequested?.Invoke();
 
         ModeImage.Checked += (_, __) => SetOutput(CaptureOutput.Image);
         ModeGif.Checked   += (_, __) => SetOutput(CaptureOutput.Gif);
@@ -80,6 +82,7 @@ public partial class InlineToolbar : UserControl
         ColorPanel.IsEnabled = ann;
         BtnUndo.IsEnabled = ann;
         BtnRedo.IsEnabled = ann;
+        BtnPin.IsEnabled = ann; // pinning only applies to the screenshot (Image) flow
         OutputModeChanged?.Invoke(o);
     }
 

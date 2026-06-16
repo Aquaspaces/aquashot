@@ -11,6 +11,8 @@ using System.Windows.Media.Imaging;
 using Aquashot.Annotation;
 using Aquashot.Capture;
 using Aquashot.Editor;
+using Aquashot.Output;
+using Aquashot.Pin;
 using Aquashot.Recording;
 using Aquashot.Selection;
 using Point = System.Windows.Point;
@@ -68,6 +70,7 @@ public partial class OverlayWindow : Window
     public event Action<OverlayWindow>? RegionCommitted;
     public event Action<CapturedFrame, PixelRect, AnnotationDocument>? Confirmed;
     public event Action<PixelRect, RecordFormats>? RecordRequested;
+    public event Action? PinRequested;
     public event Action? Cancelled;
 
     [DllImport("user32.dll")]
@@ -278,6 +281,7 @@ public partial class OverlayWindow : Window
         _toolbar.CancelRequested += RaiseCancelled;
         _toolbar.ToolChanged += OnToolChanged;
         _toolbar.OutputModeChanged += OnOutputMode;
+        _toolbar.PinRequested += OnPin;
         Overlay.Children.Add(_toolbar);
 
         ApplySelection(_selVirtual, translateShapes: false, oldSel: _selVirtual);
@@ -584,6 +588,22 @@ public partial class OverlayWindow : Window
         if (_closed || o == CaptureOutput.Image) return;
         var fmt = o == CaptureOutput.Gif ? RecordFormats.Gif : RecordFormats.Mp4;
         RecordRequested?.Invoke(_selVirtual, fmt);
+    }
+
+    // Compose the annotated region into a bitmap and float it on screen as a pin,
+    // positioned over the original selection, then dismiss the capture overlay.
+    private void OnPin()
+    {
+        if (_closed || _doc == null) return;
+        var img = new OutputService().Compose(_frame, _selVirtual, _doc);
+        if (img.CanFreeze && !img.IsFrozen) img.Freeze();
+        var pin = new PinWindow(img, _sc)
+        {
+            Left = VxToDip(_selVirtual.X),
+            Top = VyToDip(_selVirtual.Y)
+        };
+        pin.Show();
+        PinRequested?.Invoke();
     }
 
     private void Confirm()
