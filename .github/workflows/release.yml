@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. 1.2.3)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = "${{ github.event.inputs.version }}"
+          if (-not $v) { $v = "${{ github.ref_name }}" -replace '^v','' }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Building version $v"
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer (fetch ffmpeg + publish + compile)
+        shell: pwsh
+        run: ./scripts/build-installer.ps1 -Version "${{ steps.ver.outputs.version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Aquashot ${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          files: dist/*.exe
+          body: |
+            Windows installer for Aquashot ${{ steps.ver.outputs.version }}.
+
+            **Install:** download `Aquashot-${{ steps.ver.outputs.version }}-Setup.exe` and run it.
+            Self-contained — no .NET runtime needed. Includes FFmpeg for GIF/MP4 recording.
+
+            > This binary bundles a GPL FFmpeg build and is therefore distributed under the GPL.
+            > Aquashot's own source remains WTFPL. See THIRD-PARTY-NOTICES.md.
