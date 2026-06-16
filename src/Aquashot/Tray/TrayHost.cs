@@ -204,7 +204,7 @@ public class TrayHost : IDisposable
     private void OpenHistory()
     {
         if (_historyWindow is { IsLoaded: true }) { _historyWindow.Activate(); return; }
-        _historyWindow = new HistoryWindow(_library, _ocrIndexer, _settings.SaveFolder);
+        _historyWindow = new HistoryWindow(_library, _ocrIndexer, _settings.SaveFolder, _settings.EnableOcr);
         _historyWindow.Show();
     }
 

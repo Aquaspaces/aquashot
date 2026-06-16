@@ -15,14 +15,20 @@ public partial class HistoryWindow : Window
     private readonly CaptureLibrary _lib;
     private readonly OcrIndexer _indexer;
     private readonly string _saveFolder;
+    private readonly bool _enableOcr;
 
-    public HistoryWindow(CaptureLibrary lib, OcrIndexer indexer, string saveFolder)
+    public HistoryWindow(CaptureLibrary lib, OcrIndexer indexer, string saveFolder, bool enableOcr)
     {
         InitializeComponent();
-        _lib = lib; _indexer = indexer; _saveFolder = saveFolder;
+        _lib = lib; _indexer = indexer; _saveFolder = saveFolder; _enableOcr = enableOcr;
         SearchBox.TextChanged += (_, __) => Refresh(SearchBox.Text);
         Grid.MouseDoubleClick += (_, __) => OpenSelected();
-        Loaded += async (_, __) => { Refresh(""); await _indexer.BackfillAsync(_saveFolder); Refresh(SearchBox.Text); };
+        Loaded += async (_, __) =>
+        {
+            Refresh("");
+            if (_enableOcr) await _indexer.BackfillAsync(_saveFolder);
+            Refresh(SearchBox.Text);
+        };
     }
 
     private void Refresh(string query)
@@ -35,13 +41,15 @@ public partial class HistoryWindow : Window
     {
         try
         {
+            // Decode lazily (Default) at reduced size: combined with list virtualization, only
+            // thumbnails that actually scroll into view are decoded, so opening a large history
+            // doesn't stall the UI thread.
             var bi = new BitmapImage();
             bi.BeginInit();
             bi.UriSource = new Uri(path);
             bi.DecodePixelWidth = 240;
-            bi.CacheOption = BitmapCacheOption.OnLoad;
+            bi.CacheOption = BitmapCacheOption.Default;
             bi.EndInit();
-            bi.Freeze();
             return bi;
         }
         catch { return null; }

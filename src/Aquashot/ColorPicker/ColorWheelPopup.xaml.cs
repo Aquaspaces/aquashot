@@ -16,11 +16,12 @@ public partial class ColorWheelPopup : UserControl
     public event Action? EyedropperRequested;
 
     private HsvColor _hsv = new(0, 1, 1);
+    private bool _suppressHue; // guards against re-entrant Refresh when we set HueSlider.Value programmatically
 
     public ColorWheelPopup()
     {
         InitializeComponent();
-        HueSlider.ValueChanged += (_, __) => { _hsv = _hsv with { H = HueSlider.Value }; Refresh(); };
+        HueSlider.ValueChanged += (_, __) => { if (_suppressHue) return; _hsv = _hsv with { H = HueSlider.Value }; Refresh(); };
         SvCanvas.MouseLeftButtonDown += OnSvDrag;
         SvCanvas.MouseMove += (s, e) => { if (e.LeftButton == MouseButtonState.Pressed) OnSvDrag(s, e); };
         HexBox.KeyDown += (_, e) => { if (e.Key == Key.Enter) TryHex(); };
@@ -31,7 +32,14 @@ public partial class ColorWheelPopup : UserControl
 
     public void SetColor(string hex)
     {
-        try { _hsv = HsvColor.FromHex(hex); HueSlider.Value = _hsv.H; Refresh(); } catch { }
+        try { _hsv = HsvColor.FromHex(hex); SetHueSilently(_hsv.H); Refresh(); } catch { }
+    }
+
+    private void SetHueSilently(double hue)
+    {
+        _suppressHue = true;
+        HueSlider.Value = hue;
+        _suppressHue = false;
     }
 
     private void OnSvDrag(object sender, MouseEventArgs e)
@@ -45,7 +53,7 @@ public partial class ColorWheelPopup : UserControl
 
     private void TryHex()
     {
-        try { _hsv = HsvColor.FromHex(HexBox.Text); HueSlider.Value = _hsv.H; Refresh(); } catch { }
+        try { _hsv = HsvColor.FromHex(HexBox.Text); SetHueSilently(_hsv.H); Refresh(); } catch { }
     }
 
     private void Refresh()
