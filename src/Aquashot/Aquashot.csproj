@@ -8,7 +8,12 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Resources\aquashot.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Resources\aquashot.ico" />
+  </ItemGroup>
 
   <ItemGroup Condition="Exists('Resources\ffmpeg.exe')">
     <EmbeddedResource Include="Resources\ffmpeg.exe">
