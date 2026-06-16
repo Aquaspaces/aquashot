@@ -4,6 +4,11 @@
         xmlns:h="clr-namespace:Aquashot.History"
         Title="Aquashot — History" Width="1000" Height="680"
         Background="{StaticResource B.Surface}">
+  <Window.Resources>
+    <!-- All buttons in this window use the dark themed button (default WPF buttons render
+         gray with near-white text from the app-wide TextBlock style = unreadable). -->
+    <Style TargetType="Button" BasedOn="{StaticResource GhostButton}"/>
+  </Window.Resources>
   <DockPanel Margin="10">
     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
       <TextBlock Text="Size" VerticalAlignment="Center" Margin="0,0,6,0"
