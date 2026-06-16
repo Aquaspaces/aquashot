@@ -30,7 +30,8 @@
             <ComboBoxItem Content="jpg"/>
         </ComboBox>
 
-        <CheckBox x:Name="StartupCheck" Content="Run at Windows startup" Margin="0,0,0,18"/>
+        <CheckBox x:Name="StartupCheck" Content="Run at Windows startup" Margin="0,0,0,10"/>
+        <CheckBox x:Name="EnableOcrCheck" Content="Index screenshot text (OCR) for search" Margin="0,0,0,18"/>
 
         <DockPanel>
             <Button x:Name="DisableSnipBtn" Content="Disable Windows PrtSc→Snip" Style="{StaticResource GhostButton}"
