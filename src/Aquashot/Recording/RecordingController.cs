@@ -8,14 +8,16 @@ using Aquashot.Settings;
 
 namespace Aquashot.Recording;
 
-// Drives a recording of an already-selected region: shows the Record/Stop bar over the
-// region, captures the live screen via ffmpeg, then finalizes to the chosen format(s).
+// Drives a recording of an already-selected region: shows a click-through border around
+// the region plus an inline Record/Stop bar, captures the live screen via ffmpeg, then
+// finalizes to the chosen format(s).
 public class RecordingController
 {
     private readonly IFFmpegRunner _runner;
     private readonly HardwareEncoderDetector _detector;
     private readonly AppSettings _settings;
 
+    private BorderOverlay? _border;
     private RecordingControlBar? _bar;
     private IFFmpegSession? _session;
     private string _intermediate = "";
@@ -34,19 +36,32 @@ public class RecordingController
         _runner = runner; _detector = detector; _settings = settings;
     }
 
-    // Begin recording the given virtual-desktop region (scale = its monitor's DPI scale).
-    public void StartRegion(PixelRect region, double scale, RecordFormats formats)
+    // Begin recording the given virtual-desktop region on the given monitor.
+    public void StartRegion(PixelRect region, MonitorInfo monitor, RecordFormats formats)
     {
-        _region = region; _scale = scale; _formats = formats;
-        // Pre-warm encoder detection (test-encode probe) now, while the user reads the bar,
-        // so pressing Record starts capture immediately instead of stalling for ~1s. Cached.
+        _region = region; _scale = monitor.DpiScale; _formats = formats;
+        // Pre-warm encoder detection (test-encode probe) now, so pressing Record starts
+        // capture immediately instead of stalling ~1s. Cached.
         _ = _detector.DetectAsync(_settings.EncoderOverride == "Auto" ? null : _settings.EncoderOverride);
+
+        _border = new BorderOverlay(region, monitor.Bounds, _scale);
+        _border.Show();
+
         _bar = new RecordingControlBar();
-        _bar.PlaceAbove(region.X / scale, region.Y / scale);
-        _bar.Cancelled += () => { _bar?.Close(); Finished?.Invoke(null, null); };
+        _bar.Place(BarLeftDip(monitor), BarTopDip(monitor));
+        _bar.Cancelled += () => { CloseChrome(); Finished?.Invoke(null, null); };
         _bar.RecordStarted += OnRecordStarted;
         _bar.Stopped += () => _ = OnStoppedAsync();
         _bar.Show();
+    }
+
+    // Just below the selection, clamped above it if there's no room at the bottom.
+    private double BarLeftDip(MonitorInfo m) => Math.Max(m.Bounds.X / _scale, _region.X / _scale);
+    private double BarTopDip(MonitorInfo m)
+    {
+        double below = (_region.Y + _region.Height) / _scale + 12;
+        double monBottom = (m.Bounds.Y + m.Bounds.Height) / _scale;
+        return below + 64 > monBottom ? Math.Max(m.Bounds.Y / _scale, _region.Y / _scale - 64) : below;
     }
 
     private async void OnRecordStarted()
@@ -60,6 +75,7 @@ public class RecordingController
         // gdigrab is the universal path; ddagrab auto-selection is a future enhancement (see design).
         var args = FFmpegArgs.CaptureGdigrab(_region, _settings.RecordFps, encoder, _intermediate);
         _session = _runner.StartCapture(args);
+        _bar?.BeginTimer(); // start the clock when capture actually begins
     }
 
     private async Task OnStoppedAsync()
@@ -69,7 +85,7 @@ public class RecordingController
         {
             var duration = DateTime.UtcNow - _startedUtc;
             var capResult = _session == null ? null : await _session.StopAsync();
-            _bar?.Close();
+            CloseChrome();
             if (capResult is { Ok: false })
             { Finished?.Invoke(null, "Capture failed: " + Tail(capResult.StderrTail)); Cleanup(); return; }
 
@@ -83,6 +99,14 @@ public class RecordingController
         }
         catch (Exception ex) { Finished?.Invoke(null, ex.Message); }
         finally { Cleanup(); }
+    }
+
+    private void CloseChrome()
+    {
+        _bar?.Close();
+        _border?.Close();
+        _bar = null;
+        _border = null;
     }
 
     private void Cleanup()
