@@ -21,6 +21,8 @@ public partial class InlineToolbar : UserControl
     public event Action? PrimaryClicked; // the right-hand Capture / Record / Stop button
     public event Action? CancelRequested;
     public event Action? PinRequested;
+    public event Action? EyedropperRequested;
+    public event Action? ColorWheelRequested;
     public event Action<CaptureOutput>? OutputModeChanged;
 
     public CaptureOutput CurrentOutput { get; private set; } = CaptureOutput.Image;
@@ -57,6 +59,8 @@ public partial class InlineToolbar : UserControl
         BtnPrimary.Click += (_, __) => PrimaryClicked?.Invoke();
         BtnCancel.Click  += (_, __) => CancelRequested?.Invoke();
         BtnPin.Click     += (_, __) => PinRequested?.Invoke();
+        ToolEyedropper.Checked += (_, __) => EyedropperRequested?.Invoke();
+        BtnColorWheel.Click    += (_, __) => ColorWheelRequested?.Invoke();
 
         ModeImage.Checked += (_, __) => SetOutput(CaptureOutput.Image);
         ModeGif.Checked   += (_, __) => SetOutput(CaptureOutput.Gif);
@@ -86,6 +90,30 @@ public partial class InlineToolbar : UserControl
 
     public void ShowTimer(bool on) => RecTimer.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
     public void SetTimer(string text) => RecTimer.Text = text;
+
+    private RadioButton? _customSwatch;
+
+    /// <summary>Set the active annotation color (from the eyedropper or color wheel) and
+    /// surface it as a selected swatch so the user sees what's active.</summary>
+    public void SetColor(string hex)
+    {
+        CurrentColor = hex;
+        var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)!);
+        if (_customSwatch == null)
+        {
+            _customSwatch = new RadioButton
+            {
+                Style = (Style)FindResource("Swatch"),
+                GroupName = "color",
+            };
+            _customSwatch.Checked += (_, __) => CurrentColor = (string)_customSwatch!.Tag;
+            ColorPanel.Children.Add(_customSwatch);
+        }
+        _customSwatch.Background = brush;
+        _customSwatch.Tag = hex;
+        _customSwatch.IsChecked = true;
+        ToolEyedropper.IsChecked = false; // sampling is a one-shot
+    }
 
     private void BuildSwatches()
     {

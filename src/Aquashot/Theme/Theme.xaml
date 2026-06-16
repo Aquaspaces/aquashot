@@ -59,6 +59,9 @@
         <PathGeometry Figures="M12 17v5"/>
         <PathGeometry Figures="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>
     </GeometryGroup>
+    <Geometry x:Key="Icon.Eyedropper">M2 22l1-4 9-9 3 3-9 9-4 1zM13 6l3-3a2 2 0 0 1 3 3l-3 3zM12 7l5 5</Geometry>
+    <Geometry x:Key="Icon.Palette">M12 3a9 9 0 1 0 0 18c1.7 0 2-1.3 1-2.2-.8-.9-.2-2.3 1-2.3h2a4 4 0 0 0 4-4c0-4.7-3.8-7.5-8-7.5zM7 12a1.3 1.3 0 1 1 0-2.6 1.3 1.3 0 0 1 0 2.6zM10 8a1.3 1.3 0 1 1 0-2.6A1.3 1.3 0 0 1 10 8zM15 8a1.3 1.3 0 1 1 0-2.6A1.3 1.3 0 0 1 15 8z</Geometry>
+    <Geometry x:Key="Icon.Grid">M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z</Geometry>
 
     <!-- ============ Tool toggle (RadioButton) ============ -->
     <Style x:Key="ToolToggle" TargetType="RadioButton">
