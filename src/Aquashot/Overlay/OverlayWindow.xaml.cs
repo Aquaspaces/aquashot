@@ -30,10 +30,10 @@ namespace Aquashot.Overlay;
 
 public partial class OverlayWindow : Window
 {
-    public enum OverlayMode { Region, Window }
+    public enum OverlayMode { Region, Window, Monitor }
     private enum Phase { Selecting, Annotating }
 
-    private readonly CapturedFrame _frame;
+    private CapturedFrame _frame;          // swapped out when the region is re-frozen
     private readonly double _sc;
     private Phase _phase = Phase.Selecting;
     private Point _start;
@@ -51,6 +51,8 @@ public partial class OverlayWindow : Window
     private List<(double X, double Y)>? _penPoints;
 
     private bool _sampling;
+    private bool _colorCopyMode;           // next click samples a pixel and copies its hex
+    private bool _liveRegion;              // freeze toggle: region is showing the live desktop
     private int _selectedIndex = -1;
     private bool _movingSelected;
     private (double X, double Y) _moveLastCrop;
@@ -79,6 +81,12 @@ public partial class OverlayWindow : Window
     public event Action<CapturedFrame, PixelRect, AnnotationDocument>? Confirmed;
     public event Action? PinRequested;
     public event Action? Cancelled;
+    public event Action<PixelRect, int>? DelayedCaptureRequested; // region, seconds
+    public event Action? RefreezeRequested;                       // ask the tray for a fresh snapshot
+
+    // Identifies which monitor this overlay covers, so the controller can hand back the
+    // matching frame when re-freezing.
+    public string MonitorId => _frame.Monitor.Id;
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
@@ -97,6 +105,44 @@ public partial class OverlayWindow : Window
         _frame = frame;
         _sc = frame.Monitor.DpiScale;
         FrozenImage.Source = frame.Bitmap;
+        ModeButton.Click += (_, __) => { ModeMenu.PlacementTarget = ModeButton; ModeMenu.IsOpen = true; };
+    }
+
+    private void ModeRegion_Click(object sender, RoutedEventArgs e)  => SetMode(OverlayMode.Region);
+    private void ModeWindow_Click(object sender, RoutedEventArgs e)  => SetMode(OverlayMode.Window);
+    private void ModeMonitor_Click(object sender, RoutedEventArgs e) => SetMode(OverlayMode.Monitor);
+
+    // Switch the selection mode and update the picker label + any live highlight.
+    private void SetMode(OverlayMode m)
+    {
+        Mode = m;
+        ModeLabel.Text = m switch
+        {
+            OverlayMode.Window  => "Window capture",
+            OverlayMode.Monitor => "Monitor capture",
+            _                   => "Region capture",
+        };
+        _hoverWindow = null;
+        _dragging = false;
+        SelRect.Visibility = Visibility.Collapsed;
+
+        if (m == OverlayMode.Monitor)
+        {
+            var b = _frame.Monitor.Bounds; // highlight the whole monitor; a click captures it
+            Canvas.SetLeft(WinRect, 0);
+            Canvas.SetTop(WinRect, 0);
+            WinRect.Width = b.Width / _sc;
+            WinRect.Height = b.Height / _sc;
+            WinRect.Visibility = Visibility.Visible;
+            ShowDimAt(0, 0, b);
+            Cursor = Cursors.Arrow;
+        }
+        else
+        {
+            WinRect.Visibility = Visibility.Collapsed;
+            DimLabel.Visibility = Visibility.Collapsed;
+            Cursor = Cursors.Cross;
+        }
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -108,6 +154,7 @@ public partial class OverlayWindow : Window
             SWP_NOACTIVATE | SWP_SHOWWINDOW);
         Activate();
         Focus();
+        SetMode(Mode); // reflect the controller-supplied starting mode in the picker
     }
 
     protected override void OnClosed(EventArgs e)
@@ -142,6 +189,11 @@ public partial class OverlayWindow : Window
             if (_hoverWindow is PixelRect wr) BeginAnnotate(wr);
             return;
         }
+        if (Mode == OverlayMode.Monitor)
+        {
+            BeginAnnotate(_frame.Monitor.Bounds);
+            return;
+        }
         _start = e.GetPosition(Overlay);
         _dragging = true;
         SelRect.Visibility = Visibility.Visible;
@@ -157,7 +209,7 @@ public partial class OverlayWindow : Window
         if (Mode == OverlayMode.Window && !_dragging)
         {
             var (vx, vy) = DipToVirtual(e.GetPosition(Overlay));
-            var win = _detector.WindowAt(vx, vy);
+            var win = _detector.WindowAt(vx, vy, new WindowInteropHelper(this).Handle);
             if (win is PixelRect wr)
             {
                 _hoverWindow = wr;
@@ -235,6 +287,7 @@ public partial class OverlayWindow : Window
         _phase = Phase.Annotating;
         SelRect.Visibility = Visibility.Collapsed;
         WinRect.Visibility = Visibility.Collapsed;
+        ModeBar.Visibility = Visibility.Collapsed; // mode is fixed once a region is committed
         if (!_closed) RegionCommitted?.Invoke(this);
 
         _doc = new AnnotationDocument();
@@ -300,6 +353,9 @@ public partial class OverlayWindow : Window
         _toolbar.OutputModeChanged += OnModeSelected;
         _toolbar.PinRequested += OnPin;
         _toolbar.EyedropperRequested += () => _sampling = true;
+        _toolbar.ColorSampleRequested += () => { _colorCopyMode = true; Cursor = Cursors.Cross; };
+        _toolbar.DelayedCaptureRequested += secs => DelayedCaptureRequested?.Invoke(_selVirtual, secs);
+        _toolbar.FreezeToggleRequested += OnFreezeToggle;
         Overlay.Children.Add(_toolbar);
 
         ApplySelection(_selVirtual, translateShapes: false, oldSel: _selVirtual);
@@ -451,6 +507,15 @@ public partial class OverlayWindow : Window
 
     private void AnnotateDown(MouseButtonEventArgs e)
     {
+        if (_colorCopyMode)
+        {
+            var hex = SampleColorHex(e.GetPosition(Overlay));
+            try { System.Windows.Clipboard.SetText(hex); } catch { /* clipboard may be locked */ }
+            _colorCopyMode = false;
+            Cursor = _toolbar!.CurrentTool == ToolKind.Select ? Cursors.Arrow : Cursors.Cross;
+            FlashDim($"Copied {hex}", e.GetPosition(Overlay));
+            return;
+        }
         if (_sampling)
         {
             _toolbar!.SetColor(SampleColorHex(e.GetPosition(Overlay)));
@@ -716,6 +781,78 @@ public partial class OverlayWindow : Window
     private void RaiseCancelled()
     {
         if (!_closed) Cancelled?.Invoke();
+    }
+
+    // ---- Capture-mode toolbar actions (colour copy / freeze toggle) ----
+
+    // Freeze toggle: first click carves the region into a live, interactive hole; second click
+    // asks the tray for a fresh capture so the region re-freezes on its new contents.
+    private void OnFreezeToggle()
+    {
+        if (_doc == null) return;
+        if (!_liveRegion)
+        {
+            CarveRegionHole();
+            SetAnnotateChromeVisible(false);
+            _liveRegion = true;
+            _toolbar?.SetFreezeActive(true);
+        }
+        else
+        {
+            RefreezeRequested?.Invoke(); // controller responds with ApplyRefreeze(newFrame)
+        }
+    }
+
+    // Replace the frozen frame with a freshly grabbed one (same monitor) and re-crop the
+    // region onto the new pixels. Called by the controller after a re-freeze request.
+    public void ApplyRefreeze(CapturedFrame newFrame)
+    {
+        if (_closed || _doc == null) return;
+        UncarveRegion();
+        _frame = newFrame; // crop + colour sampling now read the new snapshot
+        _liveRegion = false;
+        SetAnnotateChromeVisible(true);
+        ApplySelection(_selVirtual, translateShapes: false, oldSel: _selVirtual);
+        _toolbar?.SetFreezeActive(false);
+    }
+
+    private void SetAnnotateChromeVisible(bool on)
+    {
+        var v = on ? Visibility.Visible : Visibility.Collapsed;
+        if (_layer != null) _layer.Visibility = v;
+        if (_selBorder != null) _selBorder.Visibility = v;
+        if (_moveBand != null) _moveBand.Visibility = v;
+        foreach (var h in _handles) h.Visibility = v;
+        DimLabel.Visibility = Visibility.Collapsed;
+    }
+
+    // Restore the window to a solid surface (remove any carved region hole).
+    private void UncarveRegion()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        SetWindowRgn(hwnd, IntPtr.Zero, true);
+    }
+
+    private System.Windows.Threading.DispatcherTimer? _flashTimer;
+
+    // Briefly show a message badge at a point (used for "Copied #RRGGBB" feedback).
+    private void FlashDim(string text, Point atDip)
+    {
+        DimText.Text = text;
+        DimLabel.Visibility = Visibility.Visible;
+        Canvas.SetLeft(DimLabel, Math.Max(2, atDip.X + 12));
+        Canvas.SetTop(DimLabel, Math.Max(2, atDip.Y + 12));
+        _flashTimer ??= new System.Windows.Threading.DispatcherTimer
+        { Interval = TimeSpan.FromMilliseconds(1100) };
+        _flashTimer.Stop();
+        void Hide(object? s, EventArgs e)
+        {
+            _flashTimer!.Stop();
+            _flashTimer.Tick -= Hide;
+            DimLabel.Visibility = Visibility.Collapsed;
+        }
+        _flashTimer.Tick += Hide;
+        _flashTimer.Start();
     }
 
     // Sample the frozen frame's colour at a point in this window's coordinates (DIP) and

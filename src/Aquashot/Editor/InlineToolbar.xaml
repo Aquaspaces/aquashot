@@ -42,6 +42,26 @@
 
             <Border Width="1" Background="{StaticResource B.Border}" Margin="6,5"/>
 
+            <!-- Capture-mode actions (formerly tray): sample+copy a colour, delayed
+                 re-capture, and a live/re-freeze toggle for the selected region.
+                 (Window/Monitor selection lives in the top mode picker.) -->
+            <Button x:Name="BtnColorCopy" Style="{StaticResource IconButton}" Tag="{StaticResource Icon.Droplet}"
+                    ToolTip="Pick a colour from the screen and copy its hex"/>
+            <Button x:Name="BtnDelay" Style="{StaticResource IconButton}" Tag="{StaticResource Icon.Clock}"
+                    ToolTip="Delayed capture of this region (3 / 5 / 10s)">
+                <Button.ContextMenu>
+                    <ContextMenu x:Name="DelayMenu">
+                        <MenuItem Header="3 seconds"  Click="Delay3_Click"/>
+                        <MenuItem Header="5 seconds"  Click="Delay5_Click"/>
+                        <MenuItem Header="10 seconds" Click="Delay10_Click"/>
+                    </ContextMenu>
+                </Button.ContextMenu>
+            </Button>
+            <Button x:Name="BtnFreeze" Style="{StaticResource IconButton}" Tag="{StaticResource Icon.Snowflake}"
+                    ToolTip="Show the live region, click again to re-freeze a fresh snapshot"/>
+
+            <Border Width="1" Background="{StaticResource B.Border}" Margin="6,5"/>
+
             <TextBlock x:Name="RecTimer" Text="00:00" Visibility="Collapsed" Margin="4,0,8,0"
                        VerticalAlignment="Center" FontFamily="Consolas" FontSize="14"
                        Foreground="{StaticResource B.Text}"/>

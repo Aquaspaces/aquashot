@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Aquashot.Annotation;
 using Aquashot.Capture;
 using Aquashot.History;
 using Aquashot.Selection;
@@ -36,7 +37,6 @@ public class TrayHost : IDisposable
     private HistoryWindow? _historyWindow;
     private readonly ToolStripMenuItem _recentMenu = new("Recent");
     private readonly Aquashot.Freeze.FreezeController _freeze = new();
-    private readonly ToolStripMenuItem _freezeItem = new("Freeze desktop");
 
     public TrayHost()
     {
@@ -55,21 +55,10 @@ public class TrayHost : IDisposable
         };
         var menu = new ContextMenuStrip();
         menu.Items.Add("Capture region", null, (_, __) => StartCapture(OverlayWindow.OverlayMode.Region));
-        menu.Items.Add("Capture window", null, (_, __) => StartCapture(OverlayWindow.OverlayMode.Window));
         menu.Items.Add("Capture all monitors", null, (_, __) => CaptureAllMonitors());
 
-        var delay = new ToolStripMenuItem("Delayed capture");
-        delay.DropDownItems.Add("3 seconds", null, (_, __) => DelayThenCapture(3));
-        delay.DropDownItems.Add("5 seconds", null, (_, __) => DelayThenCapture(5));
-        delay.DropDownItems.Add("10 seconds", null, (_, __) => DelayThenCapture(10));
-        menu.Items.Add(delay);
-
-        menu.Items.Add("Pick color", null, (_, __) => StartColorPick());
-
-        _freezeItem.Click += (_, __) => ToggleFreeze();
-        _freeze.Resumed += () => _freezeItem.Text = "Freeze desktop";
-        menu.Items.Add(_freezeItem);
-
+        // Window pick / delayed capture / colour pick / freeze toggle now live inside the
+        // region-capture toolbar (see InlineToolbar), not the tray menu.
         menu.Items.Add(_recentMenu);
         menu.Items.Add("History…", null, (_, __) => OpenHistory());
         RebuildRecent();
@@ -104,7 +93,6 @@ public class TrayHost : IDisposable
         try
         {
             _freeze.Freeze(_capture.FreezeAll());
-            _freezeItem.Text = "Unfreeze desktop";
         }
         catch (Exception ex)
         {
@@ -122,6 +110,8 @@ public class TrayHost : IDisposable
         {
             var frames = _capture.FreezeAll();
             ctrl = new OverlayController { Mode = mode };
+            ctrl.Refreeze = () => _capture.FreezeAll();           // re-snapshot for the freeze toggle
+            ctrl.DelayedCapture += (region, secs) => DelayedRegionCapture(region, secs);
             ctrl.Confirmed += (f, r, d) =>
             {
                 // The overlay is already closed by OverlayController before this fires, but WPF
@@ -198,14 +188,36 @@ public class TrayHost : IDisposable
         finally { _busy = false; }
     }
 
-    // Capture the same region again after a short delay — handy for grabbing menus,
-    // tooltips, and other transient UI that vanishes when you click the tray.
-    private async void DelayThenCapture(int seconds)
+    // Delayed capture from the toolbar: the overlay closed and handed us its region, so the
+    // live desktop is visible again. Wait, then grab + save that exact region — handy for
+    // menus, tooltips, and other transient UI you trigger during the countdown.
+    private async void DelayedRegionCapture(PixelRect region, int seconds)
     {
-        if (_busy) return;
+        // _busy is still held from StartCapture; keep it until the deferred save finishes.
         _icon.ShowBalloonTip(1000, "Aquashot", $"Capturing in {seconds}s…", ToolTipIcon.Info);
         await Task.Delay(seconds * 1000);
-        StartCapture(OverlayWindow.OverlayMode.Region);
+        try
+        {
+            var frames = _capture.FreezeAll();
+            var frame = frames.FirstOrDefault(f => MonitorContains(f.Monitor.Bounds, region))
+                        ?? frames.FirstOrDefault();
+            if (frame == null) return;
+            var path = _output.Save(frame, region, new AnnotationDocument(), _settings, DateTime.Now);
+            Remember(path);
+            _icon.ShowBalloonTip(2000, "Aquashot", "Saved & copied: " + path, ToolTipIcon.Info);
+        }
+        catch (Exception ex)
+        {
+            _icon.ShowBalloonTip(3000, "Aquashot", "Delayed capture failed: " + ex.Message, ToolTipIcon.Error);
+        }
+        finally { _busy = false; }
+    }
+
+    // True when a region's centre falls inside a monitor's bounds.
+    private static bool MonitorContains(PixelRect monitor, PixelRect region)
+    {
+        double cx = region.X + region.Width / 2, cy = region.Y + region.Height / 2;
+        return cx >= monitor.X && cx < monitor.Right && cy >= monitor.Y && cy < monitor.Bottom;
     }
 
     private void Remember(string path)
@@ -269,33 +281,6 @@ public class TrayHost : IDisposable
         catch (Exception ex)
         {
             _icon.ShowBalloonTip(2000, "Aquashot", "Open failed: " + ex.Message, ToolTipIcon.Error);
-        }
-    }
-
-    // Eyedropper: freeze the screen, hover to preview, click to copy the pixel's hex.
-    private void StartColorPick()
-    {
-        if (_busy) return;
-        _busy = true;
-        Aquashot.ColorPicker.ColorPickerController? c = null;
-        try
-        {
-            var frames = _capture.FreezeAll();
-            c = new Aquashot.ColorPicker.ColorPickerController();
-            c.Picked += hex =>
-            {
-                _busy = false;
-                try { System.Windows.Clipboard.SetText(hex); } catch { /* clipboard may be locked */ }
-                _icon.ShowBalloonTip(2000, "Aquashot", "Color copied: " + hex, ToolTipIcon.Info);
-            };
-            c.Cancelled += () => _busy = false;
-            c.Show(frames);
-        }
-        catch (Exception ex)
-        {
-            c?.Close();
-            _busy = false;
-            _icon.ShowBalloonTip(3000, "Aquashot", "Color pick failed: " + ex.Message, ToolTipIcon.Error);
         }
     }
 
