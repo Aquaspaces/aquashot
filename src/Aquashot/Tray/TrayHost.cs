@@ -125,16 +125,25 @@ public class TrayHost : IDisposable
             ctrl.Confirmed += (f, r, d) =>
             {
                 _busy = false;
-                try
-                {
-                    var path = _output.Save(f, r, d, _settings, DateTime.Now);
-                    Remember(path);
-                    _icon.ShowBalloonTip(2000, "Aquashot", "Saved & copied: " + path, ToolTipIcon.Info);
-                }
-                catch (Exception ex)
-                {
-                    _icon.ShowBalloonTip(3000, "Aquashot", "Save failed: " + ex.Message, ToolTipIcon.Error);
-                }
+                // The overlay is already closed by OverlayController before this fires, but WPF
+                // hasn't repainted yet — the synchronous Save (PNG encode + clipboard + disk) would
+                // block the render and leave the dimmed overlay on screen. Defer the save to a
+                // Background dispatcher pass so the close paints first; capture feels instant.
+                Application.Current.Dispatcher.BeginInvoke(
+                    System.Windows.Threading.DispatcherPriority.Background,
+                    new Action(() =>
+                    {
+                        try
+                        {
+                            var path = _output.Save(f, r, d, _settings, DateTime.Now);
+                            Remember(path);
+                            _icon.ShowBalloonTip(2000, "Aquashot", "Saved & copied: " + path, ToolTipIcon.Info);
+                        }
+                        catch (Exception ex)
+                        {
+                            _icon.ShowBalloonTip(3000, "Aquashot", "Save failed: " + ex.Message, ToolTipIcon.Error);
+                        }
+                    }));
             };
             ctrl.Cancelled += () => _busy = false;
             ctrl.PinRequested += () => _busy = false; // pinned to screen; capture flow is done
