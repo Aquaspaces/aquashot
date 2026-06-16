@@ -33,6 +33,8 @@ public class TrayHost : IDisposable
     private Aquashot.Recording.HardwareEncoderDetector? _encoderDetector;
     private readonly RecentCaptures _recent;
     private readonly ToolStripMenuItem _recentMenu = new("Recent");
+    private readonly Aquashot.Freeze.FreezeController _freeze = new();
+    private readonly ToolStripMenuItem _freezeItem = new("Freeze desktop");
 
     public TrayHost()
     {
@@ -59,6 +61,11 @@ public class TrayHost : IDisposable
         menu.Items.Add(delay);
 
         menu.Items.Add("Pick color", null, (_, __) => StartColorPick());
+
+        _freezeItem.Click += (_, __) => ToggleFreeze();
+        _freeze.Resumed += () => _freezeItem.Text = "Freeze desktop";
+        menu.Items.Add(_freezeItem);
+
         menu.Items.Add(_recentMenu);
         RebuildRecent();
 
@@ -70,6 +77,8 @@ public class TrayHost : IDisposable
 
         _hotkey = new HotkeyService();
         _hotkey.Pressed += () => StartCapture(OverlayWindow.OverlayMode.Region);
+        _hotkey.FreezePressed += ToggleFreeze;
+        _hotkey.RegisterFreeze(_settings.FreezeHotkey);
         if (!_hotkey.Register(_settings.Hotkey))
             _icon.ShowBalloonTip(3000, "Aquashot",
                 $"Could not register hotkey '{_settings.Hotkey}'. Open Settings to change it.",
@@ -81,8 +90,25 @@ public class TrayHost : IDisposable
                 ToolTipIcon.Info);
     }
 
+    // Freeze the desktop into a static, always-on-top snapshot (looks paused); toggle to resume.
+    private void ToggleFreeze()
+    {
+        if (_freeze.IsActive) { _freeze.Resume(); return; }
+        if (_busy) return;
+        try
+        {
+            _freeze.Freeze(_capture.FreezeAll());
+            _freezeItem.Text = "Unfreeze desktop";
+        }
+        catch (Exception ex)
+        {
+            _icon.ShowBalloonTip(3000, "Aquashot", "Freeze failed: " + ex.Message, ToolTipIcon.Error);
+        }
+    }
+
     private void StartCapture(OverlayWindow.OverlayMode mode)
     {
+        if (_freeze.IsActive) _freeze.Resume(); // capturing resumes a frozen desktop first
         if (_busy) return;
         _busy = true;
         OverlayController? ctrl = null;
@@ -261,6 +287,7 @@ public class TrayHost : IDisposable
             _settings = win.Result;
             _store.Save(_settings);
             _hotkey.Register(_settings.Hotkey);
+            _hotkey.RegisterFreeze(_settings.FreezeHotkey);
         }
     }
 
