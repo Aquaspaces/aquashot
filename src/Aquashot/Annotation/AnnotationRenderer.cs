@@ -49,6 +49,20 @@ public class AnnotationRenderer
         }
     }
 
+    // Annotations only, on a transparent canvas of the crop size — used to overlay
+    // (burn) them onto a recorded video via ffmpeg.
+    public BitmapSource RenderTransparent(int width, int height, IReadOnlyList<Shape> shapes)
+    {
+        int w = Math.Max(1, width), h = Math.Max(1, height);
+        var dv = new DrawingVisual();
+        using (var dc = dv.RenderOpen())
+            Draw(dc, shapes);
+        var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+        rtb.Render(dv);
+        rtb.Freeze();
+        return rtb;
+    }
+
     public BitmapSource Flatten(BitmapSource baseImage, PixelRect crop, IReadOnlyList<Shape> shapes)
     {
         int cx = (int)crop.X, cy = (int)crop.Y;

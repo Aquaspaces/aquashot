@@ -23,7 +23,8 @@ public class RecordingEncoder
     }
 
     public async Task<RecordResult> ProduceAsync(string intermediate, string encoder,
-        RecordFormats formats, TimeSpan duration, int sourceWidth, int fps, string outBase)
+        RecordFormats formats, TimeSpan duration, int sourceWidth, int fps, string outBase,
+        string? overlayPng = null)
     {
         var files = new List<string>();
         bool capForced = false;
@@ -32,7 +33,7 @@ public class RecordingEncoder
         {
             var mp4 = outBase + ".mp4";
             int kbps = SizeTargeter.BitrateKbps(duration, _budget);
-            var r = await _runner.RunAsync(FFmpegArgs.Mp4Transcode(intermediate, encoder, kbps, mp4));
+            var r = await _runner.RunAsync(FFmpegArgs.Mp4Transcode(intermediate, encoder, kbps, mp4, overlayPng));
             if (!r.Ok) throw new InvalidOperationException("MP4 encode failed: " + r.StderrTail);
             files.Add(mp4);
         }
@@ -41,11 +42,11 @@ public class RecordingEncoder
         {
             var gif = outBase + ".gif";
             var plan = SizeTargeter.GifPlan(sourceWidth, fps);
-            await RenderGif(intermediate, plan, gif);
+            await RenderGif(intermediate, plan, gif, overlayPng);
             if (SizeTargeter.OverBudget(_sizeOf(gif), _budget))
             {
                 capForced = true;
-                await RenderGif(intermediate, SizeTargeter.Shrink(plan), gif);
+                await RenderGif(intermediate, SizeTargeter.Shrink(plan), gif, overlayPng);
             }
             files.Add(gif);
         }
@@ -53,14 +54,14 @@ public class RecordingEncoder
         return new RecordResult(files, capForced);
     }
 
-    private async Task RenderGif(string input, (int fps, int width) plan, string outGif)
+    private async Task RenderGif(string input, (int fps, int width) plan, string outGif, string? overlayPng)
     {
         var palette = Path.Combine(Path.GetTempPath(), "aqua-pal-" + Guid.NewGuid().ToString("N") + ".png");
         try
         {
-            var p1 = await _runner.RunAsync(FFmpegArgs.GifPalettegen(input, plan.fps, plan.width, palette));
+            var p1 = await _runner.RunAsync(FFmpegArgs.GifPalettegen(input, plan.fps, plan.width, palette, overlayPng));
             if (!p1.Ok) throw new InvalidOperationException("GIF palettegen failed: " + p1.StderrTail);
-            var p2 = await _runner.RunAsync(FFmpegArgs.GifPaletteuse(input, palette, plan.fps, plan.width, outGif));
+            var p2 = await _runner.RunAsync(FFmpegArgs.GifPaletteuse(input, palette, plan.fps, plan.width, outGif, overlayPng));
             if (!p2.Ok) throw new InvalidOperationException("GIF paletteuse failed: " + p2.StderrTail);
         }
         finally { try { if (File.Exists(palette)) File.Delete(palette); } catch { } }

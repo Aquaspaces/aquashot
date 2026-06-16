@@ -81,6 +81,11 @@ public partial class OverlayWindow : Window
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] private static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool redraw);
+    [DllImport("gdi32.dll")] private static extern IntPtr CreateRectRgn(int x1, int y1, int x2, int y2);
+    [DllImport("gdi32.dll")] private static extern int CombineRgn(IntPtr dst, IntPtr a, IntPtr b, int mode);
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr h);
+    private const int RGN_DIFF = 4;
     private static readonly IntPtr HWND_TOPMOST = new(-1);
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint SWP_SHOWWINDOW = 0x0040;
@@ -611,25 +616,24 @@ public partial class OverlayWindow : Window
         _ = StartRecordingAsync();
     }
 
-    // Switch the overlay to live-recording chrome: hide the frozen backdrop + selection
-    // gizmos so the real screen shows through inside the region. The annotation layer and
-    // dashed border stay (painted over the region → captured into the recording); the
-    // toolbar sits below the region, outside gdigrab's capture rect.
+    // Start recording inline: carve a hole in this (opaque, hardware-accelerated) window
+    // over the region so the live screen shows through and stays interactive, while the
+    // frozen+dimmed surroundings and the toolbar (below the region) remain. Annotations
+    // are burned into the output by ffmpeg from a rendered PNG. No popout, fast selection.
     private async Task StartRecordingAsync()
     {
         if (Recorder == null) return;
         var fmt = _toolbar!.CurrentOutput == CaptureOutput.Gif ? RecordFormats.Gif : RecordFormats.Mp4;
 
-        FrozenImage.Visibility = Visibility.Collapsed;
-        Dim.Visibility = Visibility.Collapsed;
+        var annPng = TryRenderAnnotationPng();
+        CarveRegionHole();
         DimLabel.Visibility = Visibility.Collapsed;
         foreach (var h in _handles) h.Visibility = Visibility.Collapsed;
         if (_moveBand != null) _moveBand.Visibility = Visibility.Collapsed;
-        if (_selBorder != null) _selBorder.Visibility = Visibility.Collapsed; // sits on the capture edge
         ClearSelection();
         _layer!.Refresh();
 
-        var err = await Recorder.StartAsync(_selVirtual, fmt);
+        var err = await Recorder.StartAsync(_selVirtual, fmt, annPng);
         if (err != null) { if (!_closed) Close(); return; } // recorder surfaces the error via Finished
 
         _recording = true;
@@ -638,6 +642,35 @@ public partial class OverlayWindow : Window
         _toolbar.SetTimer("00:00");
         _recTimer.Tick += OnRecTick;
         _recTimer.Start();
+    }
+
+    // Render the current annotations onto a transparent PNG (crop-sized) for ffmpeg to
+    // overlay onto the recording. Returns null if there's nothing to draw.
+    private string? TryRenderAnnotationPng()
+    {
+        if (_doc == null || _doc.Shapes.Count == 0) return null;
+        int w = Math.Max(1, (int)_selVirtual.Width), h = Math.Max(1, (int)_selVirtual.Height);
+        var bmp = new AnnotationRenderer().RenderTransparent(w, h, _doc.Shapes);
+        var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+            "aqua-ann-" + Guid.NewGuid().ToString("N") + ".png");
+        var enc = new PngBitmapEncoder();
+        enc.Frames.Add(BitmapFrame.Create(bmp));
+        using var fs = System.IO.File.Create(path);
+        enc.Save(fs);
+        return path;
+    }
+
+    // Make the region a true window hole: live desktop shows through and receives clicks.
+    private void CarveRegionHole()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        var b = _frame.Monitor.Bounds;
+        int sx = (int)(_selVirtual.X - b.X), sy = (int)(_selVirtual.Y - b.Y);
+        var full = CreateRectRgn(0, 0, (int)b.Width, (int)b.Height);
+        var hole = CreateRectRgn(sx, sy, sx + (int)_selVirtual.Width, sy + (int)_selVirtual.Height);
+        CombineRgn(full, full, hole, RGN_DIFF);
+        DeleteObject(hole);
+        SetWindowRgn(hwnd, full, true); // window takes ownership of 'full'
     }
 
     private void OnRecTick(object? sender, EventArgs e)

@@ -19,6 +19,7 @@ public class RecordingController
 
     private IFFmpegSession? _session;
     private string _intermediate = "";
+    private string? _overlayPng;
     private string _encoderName = "libx264";
     private PixelRect _region;
     private RecordFormats _formats = RecordFormats.Mp4;
@@ -55,12 +56,14 @@ public class RecordingController
             _ = _detector!.DetectAsync(_settings.EncoderOverride == "Auto" ? null : _settings.EncoderOverride);
     }
 
-    // Start capturing the region. Returns null on success, or an error message.
-    public async Task<string?> StartAsync(PixelRect region, RecordFormats formats)
+    // Start capturing the region. overlayPng (optional) is a transparent annotation image
+    // burned over the output. Returns null on success, or an error message.
+    public async Task<string?> StartAsync(PixelRect region, RecordFormats formats, string? overlayPng = null)
     {
         if (!EnsureFfmpeg(out var err)) return err;
         _region = region;
         _formats = formats;
+        _overlayPng = overlayPng;
         _stopping = false;
 
         var encoder = (await _detector!.DetectAsync(
@@ -86,7 +89,7 @@ public class RecordingController
             var encoder = new RecordingEncoder(_runner!);
             var outBase = OutputService.RecordingOutputBase(_settings, DateTime.Now);
             var result = await encoder.ProduceAsync(_intermediate, _encoderName,
-                _formats, duration, (int)_region.Width, _settings.RecordFps, outBase);
+                _formats, duration, (int)_region.Width, _settings.RecordFps, outBase, _overlayPng);
 
             foreach (var f in result.Files) OutputService.CopyFileToClipboard(f); // last wins on clipboard
             Finished?.Invoke(result, null);
@@ -98,6 +101,8 @@ public class RecordingController
     private void Cleanup()
     {
         try { if (File.Exists(_intermediate)) File.Delete(_intermediate); } catch { }
+        try { if (_overlayPng != null && File.Exists(_overlayPng)) File.Delete(_overlayPng); } catch { }
+        _overlayPng = null;
         _session = null;
     }
 

@@ -33,26 +33,61 @@ public static class FFmpegArgs
         "-c:v", encoder, "-pix_fmt", "yuv420p", outPath
     };
 
-    public static List<string> GifPalettegen(string input, int fps, int width, string palettePath) => new()
+    // Optional overlayPng burns a transparent annotation image over the video (input 1).
+    public static List<string> GifPalettegen(string input, int fps, int width, string palettePath,
+        string? overlayPng = null)
     {
-        "-y", "-i", input,
-        "-vf", $"fps={fps},scale={width}:-1:flags=lanczos,palettegen=stats_mode=diff",
-        palettePath
-    };
+        string scale = $"fps={fps},scale={width}:-1:flags=lanczos,palettegen=stats_mode=diff";
+        if (overlayPng == null)
+            return new() { "-y", "-i", input, "-vf", scale, palettePath };
+        return new()
+        {
+            "-y", "-i", input, "-i", overlayPng,
+            "-filter_complex", $"[0:v][1:v]overlay=0:0,{scale}", palettePath
+        };
+    }
 
-    public static List<string> GifPaletteuse(string input, string palettePath, int fps, int width, string outPath) => new()
+    public static List<string> GifPaletteuse(string input, string palettePath, int fps, int width, string outPath,
+        string? overlayPng = null)
     {
-        "-y", "-i", input, "-i", palettePath,
-        "-lavfi", $"fps={fps},scale={width}:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=sierra2_4a",
-        outPath
-    };
+        if (overlayPng == null)
+            return new()
+            {
+                "-y", "-i", input, "-i", palettePath,
+                "-lavfi", $"fps={fps},scale={width}:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=sierra2_4a",
+                outPath
+            };
+        // inputs: 0=video, 1=overlay, 2=palette
+        return new()
+        {
+            "-y", "-i", input, "-i", overlayPng, "-i", palettePath,
+            "-filter_complex",
+            $"[0:v][1:v]overlay=0:0,fps={fps},scale={width}:-1:flags=lanczos[x];[x][2:v]paletteuse=dither=sierra2_4a",
+            outPath
+        };
+    }
 
-    public static List<string> Mp4Transcode(string input, string encoder, int bitrateKbps, string outPath) => new()
+    public static List<string> Mp4Transcode(string input, string encoder, int bitrateKbps, string outPath,
+        string? overlayPng = null)
     {
-        "-y", "-i", input, "-c:v", encoder,
-        "-b:v", $"{bitrateKbps}k", "-maxrate", $"{bitrateKbps * 3 / 2}k", "-bufsize", $"{bitrateKbps * 2}k",
-        "-fs", "49M", "-pix_fmt", "yuv420p", "-movflags", "+faststart", outPath
-    };
+        var args = new List<string> { "-y", "-i", input };
+        if (overlayPng == null)
+        {
+            args.Add("-c:v"); args.Add(encoder);
+            args.AddRange(new[] { "-pix_fmt", "yuv420p" });
+        }
+        else
+        {
+            args.AddRange(new[] { "-i", overlayPng, "-filter_complex", "[0:v][1:v]overlay=0:0,format=yuv420p" });
+            args.Add("-c:v"); args.Add(encoder);
+        }
+        args.AddRange(new[]
+        {
+            "-b:v", $"{bitrateKbps}k", "-maxrate", $"{bitrateKbps * 3 / 2}k", "-bufsize", $"{bitrateKbps * 2}k",
+            "-fs", "49M", "-movflags", "+faststart", outPath
+        });
+        return args;
+    }
 
     public static List<string> EncodeProbe(string encoder) => new()
     {
