@@ -1,6 +1,10 @@
 using System;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Aquashot.Capture;
+using Aquashot.History;
 using Aquashot.Selection;
 using Aquashot.Input;
 using Aquashot.Output;
@@ -9,6 +13,7 @@ using Aquashot.Settings;
 using NotifyIcon = System.Windows.Forms.NotifyIcon;
 using ContextMenuStrip = System.Windows.Forms.ContextMenuStrip;
 using ToolStripSeparator = System.Windows.Forms.ToolStripSeparator;
+using ToolStripMenuItem = System.Windows.Forms.ToolStripMenuItem;
 using ToolTipIcon = System.Windows.Forms.ToolTipIcon;
 using SystemIcons = System.Drawing.SystemIcons;
 using Application = System.Windows.Application;
@@ -26,11 +31,15 @@ public class TrayHost : IDisposable
     private bool _busy;
     private Aquashot.Capture.FFmpegRunner? _ffmpeg;
     private Aquashot.Recording.HardwareEncoderDetector? _encoderDetector;
+    private readonly RecentCaptures _recent;
+    private readonly ToolStripMenuItem _recentMenu = new("Recent");
 
     public TrayHost()
     {
         _store = new SettingsStore(SettingsStore.DefaultPath());
         _settings = _store.Load();
+        _recent = new RecentCaptures(Path.Combine(
+            Path.GetDirectoryName(SettingsStore.DefaultPath())!, "recent.json"));
 
         _icon = new NotifyIcon
         {
@@ -42,6 +51,16 @@ public class TrayHost : IDisposable
         menu.Items.Add("Capture region", null, (_, __) => StartCapture(OverlayWindow.OverlayMode.Region));
         menu.Items.Add("Capture window", null, (_, __) => StartCapture(OverlayWindow.OverlayMode.Window));
         menu.Items.Add("Capture all monitors", null, (_, __) => CaptureAllMonitors());
+
+        var delay = new ToolStripMenuItem("Delayed capture");
+        delay.DropDownItems.Add("3 seconds", null, (_, __) => DelayThenCapture(3));
+        delay.DropDownItems.Add("5 seconds", null, (_, __) => DelayThenCapture(5));
+        delay.DropDownItems.Add("10 seconds", null, (_, __) => DelayThenCapture(10));
+        menu.Items.Add(delay);
+
+        menu.Items.Add(_recentMenu);
+        RebuildRecent();
+
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Settings…", null, (_, __) => OpenSettings());
         menu.Items.Add("Quit", null, (_, __) => Quit());
@@ -76,6 +95,7 @@ public class TrayHost : IDisposable
                 try
                 {
                     var path = _output.Save(f, r, d, _settings, DateTime.Now);
+                    Remember(path);
                     _icon.ShowBalloonTip(2000, "Aquashot", "Saved & copied: " + path, ToolTipIcon.Info);
                 }
                 catch (Exception ex)
@@ -106,6 +126,7 @@ public class TrayHost : IDisposable
             var monitors = frames.Select(f => f.Monitor).ToList();
             var composite = DesktopStitcher.Stitch(frames, new VirtualDesktop(monitors).Bounds);
             var path = _output.SaveComposite(composite, _settings, DateTime.Now);
+            Remember(path);
             _icon.ShowBalloonTip(2000, "Aquashot", "All monitors saved & copied: " + path, ToolTipIcon.Info);
         }
         catch (Exception ex)
@@ -138,9 +159,10 @@ public class TrayHost : IDisposable
                     _icon.ShowBalloonTip(3000, "Aquashot", "Record failed: " + error, ToolTipIcon.Error);
                 else if (result != null)
                 {
+                    foreach (var file in result.Files) Remember(file);
                     var note = result.SizeCapForced ? " (reduced to fit 50 MB)" : "";
                     _icon.ShowBalloonTip(2500, "Aquashot",
-                        "Saved & copied: " + string.Join(", ", result.Files.Select(System.IO.Path.GetFileName)) + note,
+                        "Saved & copied: " + string.Join(", ", result.Files.Select(Path.GetFileName)) + note,
                         ToolTipIcon.Info);
                 }
             };
@@ -150,6 +172,55 @@ public class TrayHost : IDisposable
         {
             _busy = false;
             _icon.ShowBalloonTip(3000, "Aquashot", "Record failed: " + ex.Message, ToolTipIcon.Error);
+        }
+    }
+
+    // Capture the same region again after a short delay — handy for grabbing menus,
+    // tooltips, and other transient UI that vanishes when you click the tray.
+    private async void DelayThenCapture(int seconds)
+    {
+        if (_busy) return;
+        _icon.ShowBalloonTip(1000, "Aquashot", $"Capturing in {seconds}s…", ToolTipIcon.Info);
+        await Task.Delay(seconds * 1000);
+        StartCapture(OverlayWindow.OverlayMode.Region);
+    }
+
+    private void Remember(string path)
+    {
+        _recent.Add(path);
+        RebuildRecent();
+    }
+
+    private void RebuildRecent()
+    {
+        _recentMenu.DropDownItems.Clear();
+        if (_recent.Items.Count == 0)
+        {
+            var none = _recentMenu.DropDownItems.Add("(nothing captured yet)");
+            none.Enabled = false;
+            return;
+        }
+        foreach (var path in _recent.Items.Take(10))
+        {
+            var p = path; // capture per-iteration for the click handler
+            _recentMenu.DropDownItems.Add(Path.GetFileName(p), null, (_, __) => OpenPath(p));
+        }
+        _recentMenu.DropDownItems.Add(new ToolStripSeparator());
+        _recentMenu.DropDownItems.Add("Open save folder", null, (_, __) => OpenPath(_settings.SaveFolder));
+    }
+
+    private void OpenPath(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path) || File.Exists(path))
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            else
+                _icon.ShowBalloonTip(2000, "Aquashot", "No longer exists: " + path, ToolTipIcon.Warning);
+        }
+        catch (Exception ex)
+        {
+            _icon.ShowBalloonTip(2000, "Aquashot", "Open failed: " + ex.Message, ToolTipIcon.Error);
         }
     }
 
