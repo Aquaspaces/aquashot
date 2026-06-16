@@ -24,7 +24,7 @@
             <Border Width="1" Background="{StaticResource B.Border}" Margin="6,5"/>
 
             <StackPanel x:Name="ColorPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
-            <Slider x:Name="WidthSlider" Width="84" Minimum="1" Maximum="12" Value="3"
+            <Slider x:Name="WidthSlider" Width="84" Minimum="1" Maximum="32" Value="3"
                     VerticalAlignment="Center" Margin="8,0" ToolTip="Size (scroll wheel)"
                     Foreground="{StaticResource B.Accent}"/>
             <ToggleButton x:Name="FillToggle" Style="{StaticResource IconToggle}"

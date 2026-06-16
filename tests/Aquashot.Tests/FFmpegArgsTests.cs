@@ -77,6 +77,32 @@ public class FFmpegArgsTests
     }
 
     [Fact]
+    public void Mp4_with_overlay_burns_annotation_png()
+    {
+        var args = FFmpegArgs.Mp4Transcode("mid.mp4", "h264_nvenc", 4000, "out.mp4", "ann.png");
+        var s = Join(args);
+        s.Should().Contain("-i mid.mp4");
+        s.Should().Contain("-i ann.png");
+        s.Should().Contain("overlay=0:0");
+        s.Should().Contain("-c:v h264_nvenc");
+        args[^1].Should().Be("out.mp4");
+    }
+
+    [Fact]
+    public void Gif_passes_with_overlay_reference_annotation_then_palette()
+    {
+        var pass1 = FFmpegArgs.GifPalettegen("mid.mp4", 20, 800, "pal.png", "ann.png");
+        Join(pass1).Should().Contain("overlay=0:0");
+        Join(pass1).Should().Contain("palettegen");
+
+        var pass2 = FFmpegArgs.GifPaletteuse("mid.mp4", "pal.png", 20, 800, "out.gif", "ann.png");
+        var s2 = Join(pass2);
+        s2.Should().Contain("-i mid.mp4");
+        s2.Should().Contain("-i ann.png");
+        s2.Should().Contain("[x][2:v]paletteuse"); // palette is input index 2 when overlay present
+    }
+
+    [Fact]
     public void Probe_encodes_a_few_synthetic_frames_to_null()
     {
         var args = FFmpegArgs.EncodeProbe("h264_nvenc");
