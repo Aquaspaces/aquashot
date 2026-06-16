@@ -453,7 +453,7 @@ public partial class OverlayWindow : Window
     {
         if (_sampling)
         {
-            _toolbar!.SetColor(SampleColorHex(e.GetPosition(this)));
+            _toolbar!.SetColor(SampleColorHex(e.GetPosition(Overlay)));
             _sampling = false;
             return;
         }
@@ -586,6 +586,7 @@ public partial class OverlayWindow : Window
 
     private void OnToolChanged(ToolKind t)
     {
+        _sampling = false; // switching tools cancels a pending eyedropper (avoids a stuck one-shot)
         ClearSelection();
         if (_layer != null) _layer.Refresh();
         Cursor = t == ToolKind.Select ? Cursors.Arrow : Cursors.Cross;
