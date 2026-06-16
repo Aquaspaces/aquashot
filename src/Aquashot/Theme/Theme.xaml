@@ -62,6 +62,27 @@
     <Geometry x:Key="Icon.Eyedropper">M2 22l1-4 9-9 3 3-9 9-4 1zM13 6l3-3a2 2 0 0 1 3 3l-3 3zM12 7l5 5</Geometry>
     <Geometry x:Key="Icon.Palette">M12 3a9 9 0 1 0 0 18c1.7 0 2-1.3 1-2.2-.8-.9-.2-2.3 1-2.3h2a4 4 0 0 0 4-4c0-4.7-3.8-7.5-8-7.5zM7 12a1.3 1.3 0 1 1 0-2.6 1.3 1.3 0 0 1 0 2.6zM10 8a1.3 1.3 0 1 1 0-2.6A1.3 1.3 0 0 1 10 8zM15 8a1.3 1.3 0 1 1 0-2.6A1.3 1.3 0 0 1 15 8z</Geometry>
     <Geometry x:Key="Icon.Grid">M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z</Geometry>
+    <GeometryGroup x:Key="Icon.Window">
+        <RectangleGeometry Rect="2,4,20,16" RadiusX="2" RadiusY="2"/>
+        <PathGeometry Figures="M2 8h20"/>
+        <PathGeometry Figures="M6 4v4"/>
+        <PathGeometry Figures="M10 4v4"/>
+    </GeometryGroup>
+    <GeometryGroup x:Key="Icon.Clock">
+        <EllipseGeometry Center="12,12" RadiusX="9" RadiusY="9"/>
+        <PathGeometry Figures="M12 7v5l3.5 2"/>
+    </GeometryGroup>
+    <GeometryGroup x:Key="Icon.Snowflake">
+        <PathGeometry Figures="M2 12h20"/>
+        <PathGeometry Figures="M12 2v20"/>
+        <PathGeometry Figures="m4.93 4.93 14.14 14.14"/>
+        <PathGeometry Figures="m19.07 4.93-14.14 14.14"/>
+        <PathGeometry Figures="M12 2 9.5 4.5M12 2l2.5 2.5"/>
+        <PathGeometry Figures="M12 22l-2.5-2.5M12 22l2.5-2.5"/>
+        <PathGeometry Figures="M2 12l2.5-2.5M2 12l2.5 2.5"/>
+        <PathGeometry Figures="M22 12l-2.5-2.5M22 12l-2.5 2.5"/>
+    </GeometryGroup>
+    <PathGeometry x:Key="Icon.Droplet" Figures="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
 
     <!-- ============ Tool toggle (RadioButton) ============ -->
     <Style x:Key="ToolToggle" TargetType="RadioButton">
@@ -292,6 +313,127 @@
     <Style TargetType="CheckBox">
         <Setter Property="Foreground" Value="{StaticResource B.Text}"/>
         <Setter Property="FontSize" Value="13"/>
+    </Style>
+
+    <!-- ============ ComboBox (dark) ============ -->
+    <Style TargetType="ComboBox">
+        <Setter Property="Foreground" Value="{StaticResource B.Text}"/>
+        <Setter Property="Background" Value="{StaticResource B.SurfaceAlt}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource B.Border}"/>
+        <Setter Property="Height" Value="32"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBox">
+                    <Grid>
+                        <ToggleButton Focusable="False" ClickMode="Press"
+                                      IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border Background="{StaticResource B.SurfaceAlt}" BorderBrush="{StaticResource B.Border}"
+                                            BorderThickness="1" CornerRadius="6">
+                                        <Grid>
+                                            <ContentPresenter Margin="9,0,28,0" VerticalAlignment="Center"
+                                                Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}"/>
+                                            <Path Data="M0,0 L4,4 L8,0" Stroke="{StaticResource B.Icon}" StrokeThickness="1.5"
+                                                  HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,11,0"/>
+                                        </Grid>
+                                    </Border>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True"
+                               Focusable="False" PopupAnimation="Slide">
+                            <Border Background="{StaticResource B.Surface}" BorderBrush="{StaticResource B.Border}"
+                                    BorderThickness="1" CornerRadius="6" Margin="0,2,0,0" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ItemsPresenter/>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="ComboBoxItem">
+        <Setter Property="Foreground" Value="{StaticResource B.Text}"/>
+        <Setter Property="Padding" Value="9,5"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="bd" Background="Transparent" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource B.HoverSolid}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============ Tooltip (black on white, always readable) ============ -->
+    <Style TargetType="ToolTip">
+        <Setter Property="Foreground" Value="Black"/>
+        <Setter Property="Background" Value="White"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="HasDropShadow" Value="True"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToolTip">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="#B0B0B8"
+                            BorderThickness="1" CornerRadius="4" Padding="8,5">
+                        <!-- Explicit local Foreground beats the app-wide near-white TextBlock style setter.
+                             Tooltips are plain strings, so bind Content directly. -->
+                        <TextBlock Text="{TemplateBinding Content}" Foreground="Black"
+                                   TextWrapping="Wrap" MaxWidth="320"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============ Context menu (dark, matches surface) ============ -->
+    <Style TargetType="ContextMenu">
+        <Setter Property="Background" Value="{StaticResource B.Surface}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource B.Border}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Foreground" Value="{StaticResource B.Text}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" Padding="3">
+                        <ItemsPresenter/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="MenuItem">
+        <Setter Property="Foreground" Value="{StaticResource B.Text}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="bd" Background="Transparent" CornerRadius="5" Padding="11,6">
+                        <ContentPresenter ContentSource="Header" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource B.HoverSolid}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.5"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
 </ResourceDictionary>
