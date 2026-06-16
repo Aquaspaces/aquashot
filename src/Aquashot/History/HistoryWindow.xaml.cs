@@ -119,14 +119,21 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         Grid.Visibility = Visibility.Collapsed; // hide the gallery so it can't take focus/clicks
         DetailPanel.Visibility = Visibility.Visible;
 
-        try
+        if (tile.Path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
         {
-            var full = new BitmapImage();
-            full.BeginInit(); full.UriSource = new Uri(tile.Path);
-            full.CacheOption = BitmapCacheOption.OnLoad; full.EndInit(); full.Freeze();
-            Overlay.SetImage(full);
+            Overlay.SetAnimatedGif(tile.Path); // animate instead of showing a frozen first frame
         }
-        catch { Overlay.SetImage(null); }
+        else
+        {
+            try
+            {
+                var full = new BitmapImage();
+                full.BeginInit(); full.UriSource = new Uri(tile.Path);
+                full.CacheOption = BitmapCacheOption.OnLoad; full.EndInit(); full.Freeze();
+                Overlay.SetImage(full);
+            }
+            catch { Overlay.SetImage(null); }
+        }
 
         LoadLines(tile.Path);
     }
