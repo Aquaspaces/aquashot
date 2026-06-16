@@ -29,7 +29,9 @@ public class TrayHost : IDisposable
     private readonly OutputService _output = new();
     private AppSettings _settings;
     private bool _busy;
-    private readonly RecentCaptures _recent;
+    private readonly CaptureLibrary _library;
+    private readonly OcrIndexer _ocrIndexer;
+    private HistoryWindow? _historyWindow;
     private readonly ToolStripMenuItem _recentMenu = new("Recent");
     private readonly Aquashot.Freeze.FreezeController _freeze = new();
     private readonly ToolStripMenuItem _freezeItem = new("Freeze desktop");
@@ -38,8 +40,10 @@ public class TrayHost : IDisposable
     {
         _store = new SettingsStore(SettingsStore.DefaultPath());
         _settings = _store.Load();
-        _recent = new RecentCaptures(Path.Combine(
-            Path.GetDirectoryName(SettingsStore.DefaultPath())!, "recent.json"));
+        var settingsDir = Path.GetDirectoryName(SettingsStore.DefaultPath())!;
+        _library = new CaptureLibrary(Path.Combine(settingsDir, "library.json"),
+            _settings.HistoryCap, Path.Combine(settingsDir, "recent.json"));
+        _ocrIndexer = new OcrIndexer(_library, new WindowsOcrService());
 
         _icon = new NotifyIcon
         {
@@ -65,6 +69,7 @@ public class TrayHost : IDisposable
         menu.Items.Add(_freezeItem);
 
         menu.Items.Add(_recentMenu);
+        menu.Items.Add("History…", null, (_, __) => OpenHistory());
         RebuildRecent();
 
         menu.Items.Add(new ToolStripSeparator());
@@ -191,20 +196,28 @@ public class TrayHost : IDisposable
 
     private void Remember(string path)
     {
-        _recent.Add(path);
+        _library.Add(path, DateTime.Now);
+        if (_settings.EnableOcr) _ = _ocrIndexer.EnqueueAsync(path);
         RebuildRecent();
+    }
+
+    private void OpenHistory()
+    {
+        if (_historyWindow is { IsLoaded: true }) { _historyWindow.Activate(); return; }
+        _historyWindow = new HistoryWindow(_library, _ocrIndexer, _settings.SaveFolder);
+        _historyWindow.Show();
     }
 
     private void RebuildRecent()
     {
         _recentMenu.DropDownItems.Clear();
-        if (_recent.Items.Count == 0)
+        if (_library.Entries.Count == 0)
         {
             var none = _recentMenu.DropDownItems.Add("(nothing captured yet)");
             none.Enabled = false;
             return;
         }
-        foreach (var path in _recent.Items.Take(10))
+        foreach (var path in _library.Entries.Select(e => e.Path).Take(10))
         {
             var p = path; // capture per-iteration for the click handler
             _recentMenu.DropDownItems.Add(Path.GetFileName(p), null, (_, __) => OpenPath(p));
