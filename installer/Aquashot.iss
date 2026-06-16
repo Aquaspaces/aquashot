@@ -16,7 +16,7 @@
 #define MyAppName "Aquashot"
 #define MyAppExe "Aquashot.exe"
 #define MyAppPublisher "Aquashot"
-#define MyAppUrl "https://github.com/REPLACE_ME/aquashot"
+#define MyAppUrl "https://github.com/Aquaspaces/aquashot"
 
 [Setup]
 ; Stable AppId — do NOT change between releases (keeps upgrades/uninstall coherent).
