@@ -20,6 +20,9 @@ public class OcrIndexerTests : IDisposable
     {
         public Task<string> RecognizeAsync(string imagePath) =>
             Task.FromResult("text-of-" + Path.GetFileNameWithoutExtension(imagePath));
+
+        public System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<OcrLine>> RecognizeLinesAsync(string imagePath)
+            => System.Threading.Tasks.Task.FromResult((System.Collections.Generic.IReadOnlyList<OcrLine>)System.Array.Empty<OcrLine>());
     }
 
     private string MakeImage(string name)
