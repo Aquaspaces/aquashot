@@ -1,3 +1,3 @@
 namespace Aquashot.Annotation;
 
-public enum ToolKind { Arrow, Rect, Ellipse, Line, Pen, Text, Counter, Blur }
+public enum ToolKind { Select, Arrow, Rect, Ellipse, Line, Pen, Text, Counter }

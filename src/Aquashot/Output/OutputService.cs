@@ -39,13 +39,22 @@ public class OutputService
         Directory.CreateDirectory(settings.SaveFolder);
         string file = Path.Combine(settings.SaveFolder,
             FilenameGenerator.Generate(settings.FilenamePattern, settings.ImageFormat, now));
-        using var fs = File.Create(file);
-        BitmapEncoder encoder = settings.ImageFormat.ToLowerInvariant() is "jpg" or "jpeg"
+        File.WriteAllBytes(file, Encode(image, settings.ImageFormat));
+        return file;
+    }
+
+    // Encodes to PNG/JPEG with no carried-over metadata (null thumbnail/metadata/colour
+    // contexts), then strips any metadata segments the encoder still emits, so saved files
+    // leak no text/timestamp/EXIF data.
+    public byte[] Encode(BitmapSource image, string format)
+    {
+        BitmapEncoder encoder = format.ToLowerInvariant() is "jpg" or "jpeg"
             ? new JpegBitmapEncoder()
             : new PngBitmapEncoder();
-        encoder.Frames.Add(BitmapFrame.Create(image));
-        encoder.Save(fs);
-        return file;
+        encoder.Frames.Add(BitmapFrame.Create(image, null, null, null));
+        using var ms = new MemoryStream();
+        encoder.Save(ms);
+        return MetadataStripper.Strip(ms.ToArray());
     }
 
     // The Windows clipboard can be transiently locked by another process; retry a few times.

@@ -7,6 +7,7 @@
             <DropShadowEffect BlurRadius="18" ShadowDepth="2" Opacity="0.5" Color="#000000"/>
         </Border.Effect>
         <StackPanel Orientation="Horizontal">
+            <RadioButton x:Name="ToolSelect"  GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Cursor}"  ToolTip="Select / move (drag items, Del to delete)"/>
             <RadioButton x:Name="ToolArrow"   GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Arrow}"   ToolTip="Arrow"/>
             <RadioButton x:Name="ToolRect"    GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Square}"  ToolTip="Rectangle"/>
             <RadioButton x:Name="ToolEllipse" GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Circle}"  ToolTip="Ellipse"/>
@@ -14,14 +15,15 @@
             <RadioButton x:Name="ToolPen"     GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Pencil}"  ToolTip="Pen"/>
             <RadioButton x:Name="ToolText"    GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Text}"    ToolTip="Text"/>
             <RadioButton x:Name="ToolCounter" GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Counter}" ToolTip="Numbered step"/>
-            <RadioButton x:Name="ToolBlur"    GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Blur}"    ToolTip="Blur / pixelate"/>
 
             <Border Width="1" Background="{StaticResource B.Border}" Margin="6,5"/>
 
             <StackPanel x:Name="ColorPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
             <Slider x:Name="WidthSlider" Width="84" Minimum="1" Maximum="12" Value="3"
-                    VerticalAlignment="Center" Margin="8,0" ToolTip="Stroke width"
+                    VerticalAlignment="Center" Margin="8,0" ToolTip="Size (scroll wheel)"
                     Foreground="{StaticResource B.Accent}"/>
+            <ToggleButton x:Name="FillToggle" Style="{StaticResource IconToggle}"
+                          Tag="{StaticResource Icon.Fill}" ToolTip="Fill shape"/>
 
             <Border Width="1" Background="{StaticResource B.Border}" Margin="6,5"/>
 

@@ -21,6 +21,14 @@ public partial class InlineToolbar : UserControl
     public ToolKind CurrentTool { get; private set; } = ToolKind.Arrow;
     public string CurrentColor { get; private set; } = "#FF3B30";
     public double CurrentWidth => WidthSlider.Value;
+    public bool CurrentFill => FillToggle.IsChecked == true;
+
+    /// <summary>Nudge the stroke/annotation size (mouse-wheel), clamped to the slider range.</summary>
+    public void AdjustWidth(double delta)
+    {
+        double v = Math.Clamp(WidthSlider.Value + delta, WidthSlider.Minimum, WidthSlider.Maximum);
+        WidthSlider.Value = v;
+    }
 
     private static readonly string[] Palette =
         { "#FF3B30", "#FFCC00", "#34C759", "#0A84FF", "#FFFFFF", "#111111" };
@@ -29,6 +37,7 @@ public partial class InlineToolbar : UserControl
     {
         InitializeComponent();
 
+        ToolSelect.Checked  += (_, __) => SetTool(ToolKind.Select);
         ToolArrow.Checked   += (_, __) => SetTool(ToolKind.Arrow);
         ToolRect.Checked    += (_, __) => SetTool(ToolKind.Rect);
         ToolEllipse.Checked += (_, __) => SetTool(ToolKind.Ellipse);
@@ -36,7 +45,6 @@ public partial class InlineToolbar : UserControl
         ToolPen.Checked     += (_, __) => SetTool(ToolKind.Pen);
         ToolText.Checked    += (_, __) => SetTool(ToolKind.Text);
         ToolCounter.Checked += (_, __) => SetTool(ToolKind.Counter);
-        ToolBlur.Checked    += (_, __) => SetTool(ToolKind.Blur);
 
         BtnUndo.Click    += (_, __) => UndoRequested?.Invoke();
         BtnRedo.Click    += (_, __) => RedoRequested?.Invoke();

@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Threading;
 using System.Windows;
 using System.Windows.Media;
@@ -49,5 +50,39 @@ public class OutputServiceTests
         });
         outp.PixelWidth.Should().Be(40);
         outp.PixelHeight.Should().Be(30);
+    }
+
+    [Fact]
+    public void Encode_ProducesDecodablePngWithoutMetadataChunks()
+    {
+        var (bytes, decodedW, decodedH) = Sta(() =>
+        {
+            var data = new OutputService().Encode(Blank(40, 30), "png");
+            using var ms = new System.IO.MemoryStream(data);
+            var dec = new PngBitmapDecoder(ms, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+            var f = dec.Frames[0];
+            return (data, f.PixelWidth, f.PixelHeight);
+        });
+
+        decodedW.Should().Be(40);
+        decodedH.Should().Be(30);
+        var sig = new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 };
+        bytes.Take(8).Should().Equal(sig);
+        ContainsAscii(bytes, "tEXt").Should().BeFalse();
+        ContainsAscii(bytes, "iTXt").Should().BeFalse();
+        ContainsAscii(bytes, "tIME").Should().BeFalse();
+    }
+
+    private static bool ContainsAscii(byte[] hay, string ascii)
+    {
+        var needle = System.Text.Encoding.ASCII.GetBytes(ascii);
+        for (int i = 0; i + needle.Length <= hay.Length; i++)
+        {
+            bool ok = true;
+            for (int j = 0; j < needle.Length; j++)
+                if (hay[i + j] != needle[j]) { ok = false; break; }
+            if (ok) return true;
+        }
+        return false;
     }
 }

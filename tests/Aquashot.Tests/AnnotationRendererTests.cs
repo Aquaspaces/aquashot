@@ -21,16 +21,19 @@ public class AnnotationRendererTests
         return result;
     }
 
-    private static BitmapSource BlankBase()
+    private static BitmapSource BlankBase() => SolidBase(Brushes.White);
+
+    private static BitmapSource SolidBase(Brush fill)
     {
         var dv = new DrawingVisual();
         using (var dc = dv.RenderOpen())
-            dc.DrawRectangle(Brushes.White, null, new Rect(0, 0, 200, 200));
+            dc.DrawRectangle(fill, null, new Rect(0, 0, 200, 200));
         var rtb = new RenderTargetBitmap(200, 200, 96, 96, PixelFormats.Pbgra32);
         rtb.Render(dv);
         rtb.Freeze();
         return rtb;
     }
+
 
     [Fact]
     public void Flatten_ProducesBitmapOfCropSize()
@@ -51,15 +54,19 @@ public class AnnotationRendererTests
     }
 
     [Fact]
-    public void Flatten_WithBlurShape_StillProducesCorrectSize()
+    public void Flatten_WithFilledShapes_ProducesCorrectSize()
     {
         var outp = Sta(() =>
         {
             var renderer = new AnnotationRenderer();
-            var shapes = new Shape[] { new BlurShape(2, 2, 40, 30, true, 1) };
-            return renderer.Flatten(BlankBase(), new PixelRect(0, 0, 60, 50), shapes);
+            var shapes = new Shape[]
+            {
+                new RectShape(2, 2, 20, 20, "#FF0000", 3, Filled: true),
+                new EllipseShape(5, 5, 15, 15, "#00FF00", 3, Filled: true),
+            };
+            return renderer.Flatten(BlankBase(), new PixelRect(0, 0, 40, 40), shapes);
         });
-        outp.PixelWidth.Should().Be(60);
-        outp.PixelHeight.Should().Be(50);
+        outp.PixelWidth.Should().Be(40);
+        outp.PixelHeight.Should().Be(40);
     }
 }
