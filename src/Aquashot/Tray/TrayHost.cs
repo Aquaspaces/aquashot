@@ -124,11 +124,12 @@ public class TrayHost : IDisposable
             ctrl = new OverlayController { Mode = mode };
             ctrl.Confirmed += (f, r, d) =>
             {
-                _busy = false;
                 // The overlay is already closed by OverlayController before this fires, but WPF
                 // hasn't repainted yet — the synchronous Save (PNG encode + clipboard + disk) would
                 // block the render and leave the dimmed overlay on screen. Defer the save to a
                 // Background dispatcher pass so the close paints first; capture feels instant.
+                // Keep _busy until the save completes so a fast second capture can't collide on the
+                // same-second filename.
                 Application.Current.Dispatcher.BeginInvoke(
                     System.Windows.Threading.DispatcherPriority.Background,
                     new Action(() =>
@@ -143,6 +144,7 @@ public class TrayHost : IDisposable
                         {
                             _icon.ShowBalloonTip(3000, "Aquashot", "Save failed: " + ex.Message, ToolTipIcon.Error);
                         }
+                        finally { _busy = false; }
                     }));
             };
             ctrl.Cancelled += () => _busy = false;
