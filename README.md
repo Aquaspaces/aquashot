@@ -75,13 +75,13 @@ tests/Aquashot.Tests/
 
 Scrolling capture · OCR / text grab · built-in upload/share · fullscreen / per-monitor one-shot mode · last-region repeat · highlighter tool · post-capture crop · "brighten only the selection" cutout polish · cross-monitor drag clamping.
 
-## Disclosure
+## Vibe Coding Disclosure
 
-Aquashot was vibe coded — built largely with the help of an AI coding agent
-(Claude Code). A human directed the design, reviewed the changes, and is
-responsible for what ships, but a lot of the implementation was AI-generated.
-Treat it accordingly: read the code before trusting it in sensitive contexts,
-and expect the rough edges that come with the territory. Issues and PRs welcome.
+This software is entirely vibe coded (as of 2026-06-16). I can't promise it's
+free of bugs, security vulnerabilities, or other major issues, and I'm not
+responsible for any problems you run into using it. Read the code before
+trusting it in sensitive contexts.
+
 
 ## License
 
