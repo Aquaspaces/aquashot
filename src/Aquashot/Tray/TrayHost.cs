@@ -30,6 +30,8 @@ public class TrayHost : IDisposable
     private AppSettings _settings;
     private bool _busy;
     private readonly CaptureLibrary _library;
+    private readonly WindowsOcrService _ocrService = new();
+    private string? _lastSaved;
     private readonly OcrIndexer _ocrIndexer;
     private HistoryWindow? _historyWindow;
     private readonly ToolStripMenuItem _recentMenu = new("Recent");
@@ -43,7 +45,7 @@ public class TrayHost : IDisposable
         var settingsDir = Path.GetDirectoryName(SettingsStore.DefaultPath())!;
         _library = new CaptureLibrary(Path.Combine(settingsDir, "library.json"),
             _settings.HistoryCap, Path.Combine(settingsDir, "recent.json"));
-        _ocrIndexer = new OcrIndexer(_library, new WindowsOcrService());
+        _ocrIndexer = new OcrIndexer(_library, _ocrService);
 
         _icon = new NotifyIcon
         {
@@ -77,6 +79,7 @@ public class TrayHost : IDisposable
         menu.Items.Add("Quit", null, (_, __) => Quit());
         _icon.ContextMenuStrip = menu;
         _icon.DoubleClick += (_, __) => StartCapture(OverlayWindow.OverlayMode.Region);
+        _icon.BalloonTipClicked += (_, __) => { if (_lastSaved != null) OpenHistory(_lastSaved); };
 
         _hotkey = new HotkeyService();
         _hotkey.Pressed += () => StartCapture(OverlayWindow.OverlayMode.Region);
@@ -196,16 +199,33 @@ public class TrayHost : IDisposable
 
     private void Remember(string path)
     {
+        _lastSaved = path;
         _library.Add(path, DateTime.Now);
         if (_settings.EnableOcr) _ = _ocrIndexer.EnqueueAsync(path);
         RebuildRecent();
     }
 
-    private void OpenHistory()
+    private void OpenHistory(string? openPath = null)
     {
-        if (_historyWindow is { IsLoaded: true }) { _historyWindow.Activate(); return; }
-        _historyWindow = new HistoryWindow(_library, _ocrIndexer, _settings.SaveFolder, _settings.EnableOcr);
+        if (_historyWindow is { IsLoaded: true })
+        {
+            _historyWindow.Activate();
+            if (openPath != null) _historyWindow.OpenDetailFor(openPath);
+            return;
+        }
+        _historyWindow = new HistoryWindow(_library, _ocrIndexer, _ocrService,
+            _settings.SaveFolder, _settings.EnableOcr, _settings.HistoryThumbSize,
+            size =>
+            {
+                _settings = _settings with { HistoryThumbSize = size };
+                _store.Save(_settings);
+            });
         _historyWindow.Show();
+        if (openPath != null)
+        {
+            var p = openPath;
+            _historyWindow.Loaded += (_, __) => _historyWindow!.OpenDetailFor(p);
+        }
     }
 
     private void RebuildRecent()
