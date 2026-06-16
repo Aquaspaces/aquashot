@@ -18,4 +18,5 @@ public record AppSettings
     public string RecordFormats { get; init; } = "Both";   // "Mp4" | "Gif" | "Both"
     public bool EnableOcr { get; init; } = true;
     public int HistoryCap { get; init; } = 1000;
+    public int HistoryThumbSize { get; init; } = 200;
 }
