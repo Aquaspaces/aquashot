@@ -13,13 +13,16 @@ public class HotkeyService : IDisposable
 
     private const int WM_HOTKEY = 0x0312;
     private const int HOTKEY_ID = 0x4A12;
+    private const int HOTKEY_ID_FREEZE = 0x4A13;
     private const uint MOD_ALT = 1, MOD_CONTROL = 2, MOD_SHIFT = 4, MOD_WIN = 8, MOD_NOREPEAT = 0x4000;
     private static readonly IntPtr HWND_MESSAGE = new(-3);
 
     private HwndSource? _source;
     private bool _registered;
+    private bool _freezeRegistered;
 
     public event Action? Pressed;
+    public event Action? FreezePressed;
 
     public HotkeyService()
     {
@@ -51,12 +54,34 @@ public class HotkeyService : IDisposable
         }
     }
 
+    // Optional second global hotkey for toggling the freeze-desktop overlay.
+    // Empty/blank disables it. Returns false if the combo is invalid or already taken.
+    public bool RegisterFreeze(string hotkey)
+    {
+        UnregisterFreeze();
+        if (string.IsNullOrWhiteSpace(hotkey)) return false;
+        var (mods, vk) = ParseHotkey(hotkey);
+        if (vk == 0) return false;
+        _freezeRegistered = RegisterHotKey(_source!.Handle, HOTKEY_ID_FREEZE, mods | MOD_NOREPEAT, vk);
+        return _freezeRegistered;
+    }
+
+    public void UnregisterFreeze()
+    {
+        if (_freezeRegistered && _source != null)
+        {
+            UnregisterHotKey(_source.Handle, HOTKEY_ID_FREEZE);
+            _freezeRegistered = false;
+        }
+    }
+
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID)
+        if (msg == WM_HOTKEY)
         {
-            Pressed?.Invoke();
-            handled = true;
+            int id = wParam.ToInt32();
+            if (id == HOTKEY_ID) { Pressed?.Invoke(); handled = true; }
+            else if (id == HOTKEY_ID_FREEZE) { FreezePressed?.Invoke(); handled = true; }
         }
         return IntPtr.Zero;
     }
@@ -108,6 +133,7 @@ public class HotkeyService : IDisposable
     public void Dispose()
     {
         Unregister();
+        UnregisterFreeze();
         _source?.RemoveHook(WndProc);
         _source?.Dispose();
         _source = null;

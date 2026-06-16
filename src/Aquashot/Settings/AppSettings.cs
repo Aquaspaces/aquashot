@@ -9,6 +9,7 @@ public record AppSettings
     public string FilenamePattern { get; init; } = "Screenshot_{yyyy-MM-dd_HHmmss}";
     public string ImageFormat { get; init; } = "png";
     public string Hotkey { get; init; } = "PrintScreen";
+    public string FreezeHotkey { get; init; } = "Ctrl+Alt+F"; // toggles freeze-desktop overlay; blank disables
     public bool RunAtStartup { get; init; } = false;
     public string DefaultColor { get; init; } = "#FF3B30";
     public double DefaultStrokeWidth { get; init; } = 3;
