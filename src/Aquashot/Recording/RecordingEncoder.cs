@@ -32,7 +32,8 @@ public class RecordingEncoder
         {
             var mp4 = outBase + ".mp4";
             int kbps = SizeTargeter.BitrateKbps(duration, _budget);
-            await _runner.RunAsync(FFmpegArgs.Mp4Transcode(intermediate, encoder, kbps, mp4));
+            var r = await _runner.RunAsync(FFmpegArgs.Mp4Transcode(intermediate, encoder, kbps, mp4));
+            if (!r.Ok) throw new InvalidOperationException("MP4 encode failed: " + r.StderrTail);
             files.Add(mp4);
         }
 
@@ -57,8 +58,10 @@ public class RecordingEncoder
         var palette = Path.Combine(Path.GetTempPath(), "aqua-pal-" + Guid.NewGuid().ToString("N") + ".png");
         try
         {
-            await _runner.RunAsync(FFmpegArgs.GifPalettegen(input, plan.fps, plan.width, palette));
-            await _runner.RunAsync(FFmpegArgs.GifPaletteuse(input, palette, plan.fps, plan.width, outGif));
+            var p1 = await _runner.RunAsync(FFmpegArgs.GifPalettegen(input, plan.fps, plan.width, palette));
+            if (!p1.Ok) throw new InvalidOperationException("GIF palettegen failed: " + p1.StderrTail);
+            var p2 = await _runner.RunAsync(FFmpegArgs.GifPaletteuse(input, palette, plan.fps, plan.width, outGif));
+            if (!p2.Ok) throw new InvalidOperationException("GIF paletteuse failed: " + p2.StderrTail);
         }
         finally { try { if (File.Exists(palette)) File.Delete(palette); } catch { } }
     }

@@ -23,6 +23,7 @@ public class RecordingController
     private string _encoderName = "libx264";
     private PixelRect _region;
     private DateTime _startedUtc;
+    private bool _stopping;
 
     // files (null on cancel/error), error (null on success/cancel)
     public event Action<RecordResult?, string?>? Finished;
@@ -68,6 +69,7 @@ public class RecordingController
     {
         var encoder = (await _detector.DetectAsync(
             _settings.EncoderOverride == "Auto" ? null : _settings.EncoderOverride))?.Name ?? "libx264";
+        if (_stopping) return; // user already pressed Stop during detection — don't start an orphan capture
         _encoderName = encoder;
         _intermediate = Path.Combine(Path.GetTempPath(), "aqua-rec-" + Guid.NewGuid().ToString("N") + ".mp4");
         _startedUtc = DateTime.UtcNow;
@@ -78,6 +80,7 @@ public class RecordingController
 
     private async Task OnStoppedAsync()
     {
+        _stopping = true;
         try
         {
             var duration = DateTime.UtcNow - _startedUtc;
