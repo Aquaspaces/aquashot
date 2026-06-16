@@ -10,4 +10,10 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
+  <ItemGroup Condition="Exists('Resources\ffmpeg.exe')">
+    <EmbeddedResource Include="Resources\ffmpeg.exe">
+      <LogicalName>Aquashot.Resources.ffmpeg.exe</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>
