@@ -52,14 +52,12 @@ public class HardwareEncoderDetector
         var available = ParseAvailable(enc.StderrTail, EncoderLadder.Default);
         // ffmpeg writes -encoders to stdout; FFmpegRunner captures both stdout+stderr into StderrTail.
 
-        var probed = new Dictionary<string, bool>();
-        bool Probe(string name)
+        foreach (var c in EncoderLadder.Default)
         {
-            if (probed.TryGetValue(name, out var ok)) return ok;
-            ok = _runner.RunAsync(FFmpegArgs.EncodeProbe(name)).GetAwaiter().GetResult().Ok;
-            probed[name] = ok;
-            return ok;
+            if (!available.Contains(c.Name)) continue;
+            if ((await _runner.RunAsync(FFmpegArgs.EncodeProbe(c.Name))).Ok)
+                return _cached = c;
         }
-        return _cached = Pick(EncoderLadder.Default, available, Probe);
+        return null;
     }
 }
