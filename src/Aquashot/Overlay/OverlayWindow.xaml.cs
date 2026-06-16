@@ -35,6 +35,7 @@ public partial class OverlayWindow : Window
     private Point _start;
     private bool _dragging;
     private bool _closed;
+    private Point _lastAnnotateDip;
 
     private readonly WindowDetector _detector = new();
     private PixelRect? _hoverWindow;
@@ -45,12 +46,21 @@ public partial class OverlayWindow : Window
     private InlineToolbar? _toolbar;
     private List<(double X, double Y)>? _penPoints;
 
+    private int _selectedIndex = -1;
+    private bool _movingSelected;
+    private (double X, double Y) _moveLastCrop;
+
     private readonly List<Rectangle> _handles = new();
     private Rectangle? _selBorder;
+    private Rectangle? _moveBand;
     private bool _resizing;
     private int _activeHandle = -1;
-    private const double HandleSize = 10;
     private const double MinSel = 10;
+    private const double MoveBandWidth = 14;
+
+    private bool _movingRegion;
+    private (double x, double y) _moveStartVirtual;
+    private PixelRect _moveOrigSel;
 
     public OverlayMode Mode { get; set; } = OverlayMode.Region;
 
@@ -123,6 +133,7 @@ public partial class OverlayWindow : Window
 
     private void OnMouseMove(object sender, MouseEventArgs e)
     {
+        if (_movingRegion) { MoveRegion(e); return; }
         if (_resizing) { ResizeMove(e); return; }
         if (_phase == Phase.Annotating) { AnnotateMove(e); return; }
 
@@ -155,6 +166,7 @@ public partial class OverlayWindow : Window
 
     private void OnMouseUp(object sender, MouseButtonEventArgs e)
     {
+        if (_movingRegion) { _movingRegion = false; Overlay.ReleaseMouseCapture(); return; }
         if (_resizing) { _resizing = false; _activeHandle = -1; Overlay.ReleaseMouseCapture(); return; }
         if (_phase == Phase.Annotating) { AnnotateUp(e); return; }
         if (!_dragging) return;
@@ -172,8 +184,14 @@ public partial class OverlayWindow : Window
         {
             if (e.Key == Key.Enter) Confirm();
             else if (e.Key == Key.C && (Keyboard.Modifiers & ModifierKeys.Control) != 0) Confirm();
-            else if (e.Key == Key.Z && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc!.Undo(); _layer!.Refresh(); }
-            else if (e.Key == Key.Y && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc!.Redo(); _layer!.Refresh(); }
+            else if (e.Key == Key.Z && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc!.Undo(); ClearSelection(); _layer!.Refresh(); }
+            else if (e.Key == Key.Y && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc!.Redo(); ClearSelection(); _layer!.Refresh(); }
+            else if ((e.Key == Key.Delete || e.Key == Key.Back) && _selectedIndex >= 0)
+            {
+                _doc!.RemoveAt(_selectedIndex);
+                ClearSelection();
+                _layer!.Refresh();
+            }
         }
     }
 
@@ -201,23 +219,48 @@ public partial class OverlayWindow : Window
         _layer = new AnnotationLayer { Doc = _doc, IsHitTestVisible = false };
         Overlay.Children.Add(_layer);
 
+        var accent = new SolidColorBrush(Color.FromRgb(0x4D, 0xA3, 0xFF));
+        accent.Freeze();
+
         _selBorder = new Rectangle
         {
-            Stroke = new SolidColorBrush(Color.FromRgb(0x4D, 0xA3, 0xFF)),
+            Stroke = accent,
             StrokeThickness = 1.5,
+            StrokeDashArray = new DoubleCollection { 4, 3 },
             IsHitTestVisible = false
         };
         Overlay.Children.Add(_selBorder);
 
+        // Transparent thick band over the dashed edge: grab it to drag the whole region.
+        _moveBand = new Rectangle
+        {
+            Stroke = Brushes.Transparent,
+            StrokeThickness = MoveBandWidth,
+            Fill = null,
+            Cursor = Cursors.SizeAll
+        };
+        _moveBand.MouseLeftButtonDown += (s, e) =>
+        {
+            _movingRegion = true;
+            _moveStartVirtual = DipToVirtual(e.GetPosition(Overlay));
+            _moveOrigSel = _selVirtual;
+            Overlay.CaptureMouse();
+            e.Handled = true;
+        };
+        Overlay.Children.Add(_moveBand);
+
         for (int i = 0; i < 8; i++)
         {
             int idx = i;
+            var (hw, hh) = HandleDim(idx);
             var h = new Rectangle
             {
-                Width = HandleSize,
-                Height = HandleSize,
-                Fill = Brushes.White,
-                Stroke = new SolidColorBrush(Color.FromRgb(0x4D, 0xA3, 0xFF)),
+                Width = hw,
+                Height = hh,
+                RadiusX = 2,
+                RadiusY = 2,
+                Fill = accent,
+                Stroke = Brushes.White,
                 StrokeThickness = 1,
                 Cursor = HandleCursor(idx)
             };
@@ -227,10 +270,11 @@ public partial class OverlayWindow : Window
         }
 
         _toolbar = new InlineToolbar();
-        _toolbar.UndoRequested += () => { _doc.Undo(); _layer.Refresh(); };
-        _toolbar.RedoRequested += () => { _doc.Redo(); _layer.Refresh(); };
+        _toolbar.UndoRequested += () => { _doc.Undo(); ClearSelection(); _layer.Refresh(); };
+        _toolbar.RedoRequested += () => { _doc.Redo(); ClearSelection(); _layer.Refresh(); };
         _toolbar.ConfirmRequested += Confirm;
         _toolbar.CancelRequested += RaiseCancelled;
+        _toolbar.ToolChanged += OnToolChanged;
         Overlay.Children.Add(_toolbar);
 
         ApplySelection(_selVirtual, translateShapes: false, oldSel: _selVirtual);
@@ -274,12 +318,18 @@ public partial class OverlayWindow : Window
         _layer.RenderTransform = new ScaleTransform(1.0 / _sc, 1.0 / _sc);
         Canvas.SetLeft(_layer, selLeftDip);
         Canvas.SetTop(_layer, selTopDip);
+        if (_selectedIndex >= 0) _layer.SelectionBox = _doc?.BoundsAt(_selectedIndex);
         _layer.Refresh();
 
         Canvas.SetLeft(_selBorder!, selLeftDip);
         Canvas.SetTop(_selBorder!, selTopDip);
         _selBorder!.Width = selWDip;
         _selBorder!.Height = selHDip;
+
+        Canvas.SetLeft(_moveBand!, selLeftDip);
+        Canvas.SetTop(_moveBand!, selTopDip);
+        _moveBand!.Width = selWDip;
+        _moveBand!.Height = selHDip;
 
         PositionHandles(selLeftDip, selTopDip, selWDip, selHDip);
         ShowDimAt(selLeftDip, selTopDip, newSel);
@@ -295,7 +345,6 @@ public partial class OverlayWindow : Window
 
     private void PositionHandles(double x, double y, double w, double h)
     {
-        double off = HandleSize / 2;
         var pts = new (double cx, double cy)[]
         {
             (x, y), (x + w / 2, y), (x + w, y),
@@ -304,10 +353,18 @@ public partial class OverlayWindow : Window
         };
         for (int i = 0; i < 8; i++)
         {
-            Canvas.SetLeft(_handles[i], pts[i].cx - off);
-            Canvas.SetTop(_handles[i], pts[i].cy - off);
+            Canvas.SetLeft(_handles[i], pts[i].cx - _handles[i].Width / 2);
+            Canvas.SetTop(_handles[i], pts[i].cy - _handles[i].Height / 2);
         }
     }
+
+    // Corners are square nubs; side handles are thick bars along their edge.
+    private static (double w, double h) HandleDim(int i) => i switch
+    {
+        0 or 2 or 4 or 6 => (13, 13),  // corners
+        1 or 5 => (30, 7),             // top / bottom
+        _ => (7, 30)                   // left / right
+    };
 
     private void ResizeMove(MouseEventArgs e)
     {
@@ -328,6 +385,27 @@ public partial class OverlayWindow : Window
         if (bottom - top < MinSel) { if (_activeHandle is 0 or 1 or 2) top = bottom - MinSel; else bottom = top + MinSel; }
         var newSel = ClampToMonitor(new PixelRect(left, top, right - left, bottom - top));
         ApplySelection(newSel, translateShapes: true, oldSel: _selVirtual);
+    }
+
+    // Drag the whole region (grabbed on the dashed border). Keeps size; annotations ride
+    // along with the region (crop-local coords unchanged, so no shape translation).
+    private void MoveRegion(MouseEventArgs e)
+    {
+        var (vx, vy) = DipToVirtual(e.GetPosition(Overlay));
+        double dx = vx - _moveStartVirtual.x;
+        double dy = vy - _moveStartVirtual.y;
+        var moved = ClampMove(new PixelRect(_moveOrigSel.X + dx, _moveOrigSel.Y + dy,
+            _moveOrigSel.Width, _moveOrigSel.Height));
+        ApplySelection(moved, translateShapes: false, oldSel: _selVirtual);
+    }
+
+    // Clamp position to keep the region fully on its monitor without changing its size.
+    private PixelRect ClampMove(PixelRect r)
+    {
+        var b = _frame.Monitor.Bounds;
+        double x = Math.Clamp(r.X, b.X, Math.Max(b.X, b.Right - r.Width));
+        double y = Math.Clamp(r.Y, b.Y, Math.Max(b.Y, b.Bottom - r.Height));
+        return new PixelRect(x, y, r.Width, r.Height);
     }
 
     private PixelRect ClampToMonitor(PixelRect r)
@@ -355,6 +433,18 @@ public partial class OverlayWindow : Window
 
         switch (tool)
         {
+            case ToolKind.Select:
+                int hit = _doc!.HitTest(cx, cy);
+                _selectedIndex = hit;
+                _movingSelected = hit >= 0;
+                if (hit >= 0)
+                {
+                    _moveLastCrop = (cx, cy);
+                    _dragging = true;
+                    Overlay.CaptureMouse();
+                }
+                UpdateSelectionBox();
+                return;
             case ToolKind.Counter:
                 _doc!.Add(new CounterShape(cx, cy, _doc.NextCounter(), color, w));
                 _layer!.Refresh();
@@ -378,15 +468,40 @@ public partial class OverlayWindow : Window
 
     private void AnnotateMove(MouseEventArgs e)
     {
+        if (_toolbar!.CurrentTool == ToolKind.Select)
+        {
+            if (!_dragging || !_movingSelected || _selectedIndex < 0) return;
+            var (mx, my) = ToCrop(e.GetPosition(Overlay));
+            _doc!.MoveAt(_selectedIndex, mx - _moveLastCrop.X, my - _moveLastCrop.Y);
+            _moveLastCrop = (mx, my);
+            UpdateSelectionBox();
+            _layer!.Refresh();
+            return;
+        }
         if (!_dragging) return;
-        var (cx, cy) = ToCrop(e.GetPosition(Overlay));
+        _lastAnnotateDip = e.GetPosition(Overlay);
+        if (_toolbar!.CurrentTool == ToolKind.Pen && _penPoints != null)
+        {
+            var (px, py) = ToCrop(_lastAnnotateDip);
+            _penPoints.Add((px, py));
+        }
+        RebuildPreview();
+    }
+
+    // Rebuild the live preview from the last known pointer position + current tool
+    // settings. Called on mouse move and on mouse-wheel size changes so resizing the
+    // annotation mid-draw updates immediately.
+    private void RebuildPreview()
+    {
+        if (!_dragging) return;
+        var (cx, cy) = ToCrop(_lastAnnotateDip);
+        var (sx, sy) = ToCrop(_start);
         string color = _toolbar!.CurrentColor;
         double w = _toolbar.CurrentWidth;
-        var (sx, sy) = ToCrop(_start);
+        bool fill = _toolbar.CurrentFill;
 
         if (_toolbar.CurrentTool == ToolKind.Pen && _penPoints != null)
         {
-            _penPoints.Add((cx, cy));
             _layer!.Preview = new PenShape(_penPoints.ToArray(), color, w);
             _layer.Refresh();
             return;
@@ -394,18 +509,32 @@ public partial class OverlayWindow : Window
 
         _layer!.Preview = _toolbar.CurrentTool switch
         {
-            ToolKind.Rect => MakeRect(sx, sy, cx, cy, color, w),
-            ToolKind.Ellipse => MakeEllipse(sx, sy, cx, cy, color, w),
+            ToolKind.Rect => MakeRect(sx, sy, cx, cy, color, w, fill),
+            ToolKind.Ellipse => MakeEllipse(sx, sy, cx, cy, color, w, fill),
             ToolKind.Line => new LineShape(sx, sy, cx, cy, color, w),
             ToolKind.Arrow => new ArrowShape(sx, sy, cx, cy, color, w),
-            ToolKind.Blur => MakeBlur(sx, sy, cx, cy, w),
             _ => null
         };
         _layer.Refresh();
     }
 
+    private void OnMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (_phase != Phase.Annotating || _toolbar == null) return;
+        _toolbar.AdjustWidth(e.Delta > 0 ? 1 : -1);
+        RebuildPreview();
+        e.Handled = true;
+    }
+
     private void AnnotateUp(MouseButtonEventArgs e)
     {
+        if (_toolbar!.CurrentTool == ToolKind.Select)
+        {
+            _movingSelected = false;
+            _dragging = false;
+            Overlay.ReleaseMouseCapture();
+            return;
+        }
         if (!_dragging) return;
         _dragging = false;
         Overlay.ReleaseMouseCapture();
@@ -419,12 +548,31 @@ public partial class OverlayWindow : Window
         _layer.Refresh();
     }
 
-    private static RectShape MakeRect(double sx, double sy, double cx, double cy, string color, double w) =>
-        new(Math.Min(sx, cx), Math.Min(sy, cy), Math.Abs(cx - sx), Math.Abs(cy - sy), color, w);
-    private static EllipseShape MakeEllipse(double sx, double sy, double cx, double cy, string color, double w) =>
-        new(Math.Min(sx, cx), Math.Min(sy, cy), Math.Abs(cx - sx), Math.Abs(cy - sy), color, w);
-    private static BlurShape MakeBlur(double sx, double sy, double cx, double cy, double w) =>
-        new(Math.Min(sx, cx), Math.Min(sy, cy), Math.Abs(cx - sx), Math.Abs(cy - sy), true, w);
+    private static RectShape MakeRect(double sx, double sy, double cx, double cy, string color, double w, bool fill) =>
+        new(Math.Min(sx, cx), Math.Min(sy, cy), Math.Abs(cx - sx), Math.Abs(cy - sy), color, w, fill);
+    private static EllipseShape MakeEllipse(double sx, double sy, double cx, double cy, string color, double w, bool fill) =>
+        new(Math.Min(sx, cx), Math.Min(sy, cy), Math.Abs(cx - sx), Math.Abs(cy - sy), color, w, fill);
+
+    private void OnToolChanged(ToolKind t)
+    {
+        ClearSelection();
+        if (_layer != null) _layer.Refresh();
+        Cursor = t == ToolKind.Select ? Cursors.Arrow : Cursors.Cross;
+    }
+
+    private void ClearSelection()
+    {
+        _selectedIndex = -1;
+        _movingSelected = false;
+        if (_layer != null) _layer.SelectionBox = null;
+    }
+
+    private void UpdateSelectionBox()
+    {
+        if (_layer == null) return;
+        _layer.SelectionBox = _selectedIndex >= 0 ? _doc?.BoundsAt(_selectedIndex) : null;
+        _layer.Refresh();
+    }
 
     private void Confirm()
     {

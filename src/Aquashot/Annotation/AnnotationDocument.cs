@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Windows;
 
 namespace Aquashot.Annotation;
 
@@ -32,6 +33,30 @@ public class AnnotationDocument
 
     public int NextCounter() => ++_counter;
 
+    // Topmost shape (last drawn) under the point, or -1. Crop-local pixel coords.
+    public int HitTest(double x, double y)
+    {
+        for (int i = _shapes.Count - 1; i >= 0; i--)
+            if (ShapeHit.Test(_shapes[i], x, y)) return i;
+        return -1;
+    }
+
+    public void MoveAt(int index, double dx, double dy)
+    {
+        if (index < 0 || index >= _shapes.Count) return;
+        _shapes[index] = Translate(_shapes[index], dx, dy);
+    }
+
+    public void RemoveAt(int index)
+    {
+        if (index < 0 || index >= _shapes.Count) return;
+        _shapes.RemoveAt(index);
+        _redo.Clear();
+    }
+
+    public Rect? BoundsAt(int index) =>
+        index >= 0 && index < _shapes.Count ? ShapeHit.Bounds(_shapes[index]) : null;
+
     public void TranslateAll(double dx, double dy)
     {
         for (int i = 0; i < _shapes.Count; i++) _shapes[i] = Translate(_shapes[i], dx, dy);
@@ -46,7 +71,6 @@ public class AnnotationDocument
         PenShape p => p with { Points = p.Points.Select(pt => (pt.X + dx, pt.Y + dy)).ToList() },
         TextShape t => t with { X = t.X + dx, Y = t.Y + dy },
         CounterShape c => c with { X = c.X + dx, Y = c.Y + dy },
-        BlurShape b => b with { X = b.X + dx, Y = b.Y + dy },
         _ => s
     };
 }

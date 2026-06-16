@@ -16,6 +16,7 @@
     <SolidColorBrush x:Key="B.Success"     Color="#46C46A"/>
 
     <!-- ============ Icon geometries (Lucide, ISC) ============ -->
+    <PathGeometry x:Key="Icon.Cursor" Figures="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/>
     <GeometryGroup x:Key="Icon.Arrow">
         <PathGeometry Figures="M7 7h10v10"/>
         <PathGeometry Figures="M7 17 17 7"/>
@@ -40,13 +41,6 @@
         <PathGeometry Figures="M4 9h2"/>
         <PathGeometry Figures="M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02"/>
     </GeometryGroup>
-    <GeometryGroup x:Key="Icon.Blur">
-        <RectangleGeometry Rect="3,3,18,18" RadiusX="2" RadiusY="2"/>
-        <PathGeometry Figures="M3 9h18"/>
-        <PathGeometry Figures="M3 15h18"/>
-        <PathGeometry Figures="M9 3v18"/>
-        <PathGeometry Figures="M15 3v18"/>
-    </GeometryGroup>
     <GeometryGroup x:Key="Icon.Undo">
         <PathGeometry Figures="M9 14 4 9l5-5"/>
         <PathGeometry Figures="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/>
@@ -55,6 +49,7 @@
         <PathGeometry Figures="m15 14 5-5-5-5"/>
         <PathGeometry Figures="M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13"/>
     </GeometryGroup>
+    <RectangleGeometry x:Key="Icon.Fill" Rect="4,4,16,16" RadiusX="2" RadiusY="2"/>
     <PathGeometry x:Key="Icon.Check" Figures="M20 6 9 17l-5-5"/>
     <GeometryGroup x:Key="Icon.X">
         <PathGeometry Figures="M18 6 6 18"/>
@@ -77,6 +72,37 @@
                                 <Path Data="{TemplateBinding Tag}" Stroke="{TemplateBinding Foreground}"
                                       StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                       StrokeLineJoin="Round"/>
+                            </Canvas>
+                        </Viewbox>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource B.HoverSolid}"/>
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource B.Accent}"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============ Icon toggle (ToggleButton) — filled-icon look ============ -->
+    <Style x:Key="IconToggle" TargetType="ToggleButton">
+        <Setter Property="Foreground" Value="{StaticResource B.Icon}"/>
+        <Setter Property="Width" Value="34"/>
+        <Setter Property="Height" Value="34"/>
+        <Setter Property="Margin" Value="1"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="bd" Background="Transparent" CornerRadius="7">
+                        <Viewbox Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{TemplateBinding Tag}" Fill="{TemplateBinding Foreground}"/>
                             </Canvas>
                         </Viewbox>
                     </Border>

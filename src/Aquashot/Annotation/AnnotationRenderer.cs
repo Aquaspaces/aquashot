@@ -8,6 +8,7 @@ using Aquashot.Selection;
 using Color = System.Windows.Media.Color;
 using ColorConverter = System.Windows.Media.ColorConverter;
 using Pen = System.Windows.Media.Pen;
+using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
 using FlowDirection = System.Windows.FlowDirection;
 using Point = System.Windows.Point;
@@ -23,10 +24,10 @@ public class AnnotationRenderer
             switch (s)
             {
                 case RectShape r:
-                    dc.DrawRectangle(null, Pen(r.Color, r.StrokeWidth), new Rect(r.X, r.Y, r.W, r.H));
+                    dc.DrawRectangle(Fill(r.Filled, r.Color), Pen(r.Color, r.StrokeWidth), new Rect(r.X, r.Y, r.W, r.H));
                     break;
                 case EllipseShape el:
-                    dc.DrawEllipse(null, Pen(el.Color, el.StrokeWidth),
+                    dc.DrawEllipse(Fill(el.Filled, el.Color), Pen(el.Color, el.StrokeWidth),
                         new Point(el.X + el.W / 2, el.Y + el.H / 2), el.W / 2, el.H / 2);
                     break;
                 case LineShape l:
@@ -43,9 +44,6 @@ public class AnnotationRenderer
                     break;
                 case CounterShape c:
                     DrawCounter(dc, c);
-                    break;
-                case BlurShape b when source != null:
-                    DrawBlur(dc, b, source);
                     break;
             }
         }
@@ -77,16 +75,28 @@ public class AnnotationRenderer
         return p;
     }
 
+    private static Brush? Fill(bool filled, string color)
+    {
+        if (!filled) return null;
+        var brush = new SolidColorBrush(ParseColor(color));
+        brush.Freeze();
+        return brush;
+    }
+
     private void DrawArrow(DrawingContext dc, ArrowShape a)
     {
         var pen = Pen(a.Color, a.StrokeWidth);
         var p1 = new Point(a.X1, a.Y1); var p2 = new Point(a.X2, a.Y2);
-        dc.DrawLine(pen, p1, p2);
         double angle = Math.Atan2(a.Y2 - a.Y1, a.X2 - a.X1);
         double head = Math.Max(10, a.StrokeWidth * 4);
         double spread = Math.PI / 7;
         var b1 = new Point(a.X2 - head * Math.Cos(angle - spread), a.Y2 - head * Math.Sin(angle - spread));
         var b2 = new Point(a.X2 - head * Math.Cos(angle + spread), a.Y2 - head * Math.Sin(angle + spread));
+        // End the shaft at the arrowhead's base, not the tip, so the line's square end
+        // never pokes out past the sides of the triangle.
+        double baseDist = head * Math.Cos(spread);
+        var shaftEnd = new Point(a.X2 - baseDist * Math.Cos(angle), a.Y2 - baseDist * Math.Sin(angle));
+        dc.DrawLine(pen, p1, shaftEnd);
         var brush = new SolidColorBrush(ParseColor(a.Color)); brush.Freeze();
         var geo = new StreamGeometry();
         using (var ctx = geo.Open())
@@ -132,32 +142,4 @@ public class AnnotationRenderer
         dc.DrawText(ft, new Point(center.X - ft.Width / 2, center.Y - ft.Height / 2));
     }
 
-    private void DrawBlur(DrawingContext dc, BlurShape b, BitmapSource source)
-    {
-        var region = new PixelRect(b.X, b.Y, b.W, b.H);
-        double block = Math.Max(6, b.W / 12);
-        var converted = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
-        foreach (var blk in BlurRegion.PixelateBlocks(region, block))
-        {
-            var color = AverageColor(converted, blk);
-            var brush = new SolidColorBrush(color); brush.Freeze();
-            dc.DrawRectangle(brush, null, new Rect(blk.X, blk.Y, blk.Width, blk.Height));
-        }
-    }
-
-    private static Color AverageColor(BitmapSource src, PixelRect area)
-    {
-        int x = (int)area.X, y = (int)area.Y;
-        int w = Math.Max(1, (int)area.Width), h = Math.Max(1, (int)area.Height);
-        x = Math.Clamp(x, 0, src.PixelWidth - 1);
-        y = Math.Clamp(y, 0, src.PixelHeight - 1);
-        w = Math.Min(w, src.PixelWidth - x);
-        h = Math.Min(h, src.PixelHeight - y);
-        int stride = w * 4;
-        var px = new byte[h * stride];
-        src.CopyPixels(new Int32Rect(x, y, w, h), px, stride, 0);
-        long bsum = 0, gsum = 0, rsum = 0; int n = w * h;
-        for (int i = 0; i < px.Length; i += 4) { bsum += px[i]; gsum += px[i + 1]; rsum += px[i + 2]; }
-        return Color.FromRgb((byte)(rsum / n), (byte)(gsum / n), (byte)(bsum / n));
-    }
 }
