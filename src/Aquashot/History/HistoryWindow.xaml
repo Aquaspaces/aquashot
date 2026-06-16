@@ -21,23 +21,17 @@
         <ListBox.ItemsPanel>
           <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
         </ListBox.ItemsPanel>
-        <ListBox.ItemContainerStyle>
-          <Style TargetType="ListBoxItem">
-            <Setter Property="ContextMenu">
-              <Setter.Value>
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <StackPanel Width="{Binding DataContext.TileSize, RelativeSource={RelativeSource AncestorType=Window}}" Margin="6">
+              <StackPanel.ContextMenu>
                 <ContextMenu>
                   <MenuItem Header="Open" Click="Open_Click"/>
                   <MenuItem Header="Copy" Click="Copy_Click"/>
                   <MenuItem Header="Reveal in folder" Click="Reveal_Click"/>
                   <MenuItem Header="Delete" Click="Delete_Click"/>
                 </ContextMenu>
-              </Setter.Value>
-            </Setter>
-          </Style>
-        </ListBox.ItemContainerStyle>
-        <ListBox.ItemTemplate>
-          <DataTemplate>
-            <StackPanel Width="{Binding DataContext.TileSize, RelativeSource={RelativeSource AncestorType=Window}}" Margin="6">
+              </StackPanel.ContextMenu>
               <Image Source="{Binding Thumb}"
                      Height="{Binding DataContext.TileImageHeight, RelativeSource={RelativeSource AncestorType=Window}}"
                      Stretch="Uniform"/>
