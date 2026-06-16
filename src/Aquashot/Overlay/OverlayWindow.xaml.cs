@@ -50,6 +50,7 @@ public partial class OverlayWindow : Window
     private InlineToolbar? _toolbar;
     private List<(double X, double Y)>? _penPoints;
 
+    private bool _sampling;
     private int _selectedIndex = -1;
     private bool _movingSelected;
     private (double X, double Y) _moveLastCrop;
@@ -298,6 +299,7 @@ public partial class OverlayWindow : Window
         _toolbar.ToolChanged += OnToolChanged;
         _toolbar.OutputModeChanged += OnModeSelected;
         _toolbar.PinRequested += OnPin;
+        _toolbar.EyedropperRequested += () => _sampling = true;
         Overlay.Children.Add(_toolbar);
 
         ApplySelection(_selVirtual, translateShapes: false, oldSel: _selVirtual);
@@ -449,6 +451,12 @@ public partial class OverlayWindow : Window
 
     private void AnnotateDown(MouseButtonEventArgs e)
     {
+        if (_sampling)
+        {
+            _toolbar!.SetColor(SampleColorHex(e.GetPosition(this)));
+            _sampling = false;
+            return;
+        }
         var (cx, cy) = ToCrop(e.GetPosition(Overlay));
         var tool = _toolbar!.CurrentTool;
         string color = _toolbar.CurrentColor;
@@ -707,5 +715,21 @@ public partial class OverlayWindow : Window
     private void RaiseCancelled()
     {
         if (!_closed) Cancelled?.Invoke();
+    }
+
+    // Sample the frozen frame's colour at a point in this window's coordinates (DIP) and
+    // return it as "#RRGGBB". Mirrors ColorPickerWindow.SampleAt's pixel-sampling pattern.
+    public string SampleColorHex(System.Windows.Point pInWindow)
+    {
+        var bmp = _frame.Bitmap;
+        double scale = _sc;
+        var (x, y) = Aquashot.ColorPicker.FrameSampler.PointToPixel(
+            scale, pInWindow.X, pInWindow.Y, bmp.PixelWidth, bmp.PixelHeight);
+        var one = new System.Windows.Media.Imaging.FormatConvertedBitmap(
+            new System.Windows.Media.Imaging.CroppedBitmap(bmp, new System.Windows.Int32Rect(x, y, 1, 1)),
+            System.Windows.Media.PixelFormats.Bgra32, null, 0);
+        var px = new byte[4];
+        one.CopyPixels(px, 4, 0);
+        return Aquashot.ColorPicker.ColorHex.Rgb(px[2], px[1], px[0]); // BGRA -> R,G,B
     }
 }
