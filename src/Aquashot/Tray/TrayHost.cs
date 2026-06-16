@@ -42,7 +42,6 @@ public class TrayHost : IDisposable
         menu.Items.Add("Capture region", null, (_, __) => StartCapture(OverlayWindow.OverlayMode.Region));
         menu.Items.Add("Capture window", null, (_, __) => StartCapture(OverlayWindow.OverlayMode.Window));
         menu.Items.Add("Capture all monitors", null, (_, __) => CaptureAllMonitors());
-        menu.Items.Add("Record…", null, (_, __) => StartRecording());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Settings…", null, (_, __) => OpenSettings());
         menu.Items.Add("Quit", null, (_, __) => Quit());
@@ -85,6 +84,8 @@ public class TrayHost : IDisposable
                 }
             };
             ctrl.Cancelled += () => _busy = false;
+            // Recording chosen in the capture toolbar: overlay closes, recording owns _busy.
+            ctrl.RecordRequested += (f, r, fmt) => StartRecording(f, r, fmt);
             ctrl.Show(frames);
         }
         catch (Exception ex)
@@ -114,22 +115,23 @@ public class TrayHost : IDisposable
         finally { _busy = false; }
     }
 
-    private void StartRecording()
+    // Started from the capture overlay when the user picks GIF/MP4 for the selected region.
+    // _busy is already true (set by StartCapture); recording owns it until Finished.
+    private void StartRecording(CapturedFrame frame, PixelRect region, Aquashot.Recording.RecordFormats formats)
     {
-        if (_busy) return;
         try { _ffmpeg ??= new Aquashot.Capture.FFmpegRunner(Aquashot.Capture.FFmpegProvider.Default().EnsureExtracted()); }
         catch (Exception ex)
         {
+            _busy = false;
             _icon.ShowBalloonTip(4000, "Aquashot",
                 "Recording unavailable (ffmpeg not bundled): " + ex.Message, ToolTipIcon.Error);
             return;
         }
         _encoderDetector ??= new Aquashot.Recording.HardwareEncoderDetector(_ffmpeg);
-        _busy = true;
         try
         {
-            var ctrl = new Aquashot.Recording.RecordingController(_capture, _ffmpeg, _encoderDetector, _settings);
-            ctrl.Finished += (result, error) =>
+            var rec = new Aquashot.Recording.RecordingController(_ffmpeg, _encoderDetector, _settings);
+            rec.Finished += (result, error) =>
             {
                 _busy = false;
                 if (error != null)
@@ -142,7 +144,7 @@ public class TrayHost : IDisposable
                         ToolTipIcon.Info);
                 }
             };
-            ctrl.Start();
+            rec.StartRegion(region, frame.Monitor.DpiScale, formats);
         }
         catch (Exception ex)
         {

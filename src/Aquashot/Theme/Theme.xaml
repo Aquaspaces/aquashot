@@ -176,6 +176,35 @@
         </Setter>
     </Style>
 
+    <!-- ============ Output-mode chip (RadioButton: PNG / GIF / MP4) ============ -->
+    <Style x:Key="ModeChip" TargetType="RadioButton">
+        <Setter Property="Foreground" Value="{StaticResource B.TextDim}"/>
+        <Setter Property="Height" Value="28"/>
+        <Setter Property="Margin" Value="1"/>
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="bd" Background="Transparent" CornerRadius="6" Padding="9,0">
+                        <TextBlock Text="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource B.HoverSolid}"/>
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource B.Accent}"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- ============ Buttons (text) ============ -->
     <Style x:Key="ModernButton" TargetType="Button">
         <Setter Property="Foreground" Value="White"/>

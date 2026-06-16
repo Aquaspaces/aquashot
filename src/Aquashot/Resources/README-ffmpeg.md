@@ -3,7 +3,10 @@
 Place a Windows `ffmpeg.exe` in this folder to enable screen recording. It is
 git-ignored (large binary, supplied per build). When present, the build embeds it
 as the resource `Aquashot.Resources.ffmpeg.exe`; when absent, the app still runs
-but the tray "Record…" action shows "recording unavailable".
+but choosing GIF/MP4 in the capture toolbar shows "recording unavailable".
+
+**Quick fetch:** run `pwsh scripts/fetch-ffmpeg.ps1` from the repo root to download a
+prebuilt GPL build into this folder automatically.
 
 **Required build features:** `--enable-nvenc --enable-amf --enable-libvpl` (qsv)
 `--enable-libx264`, plus the `ddagrab`/`gdigrab` input devices and the

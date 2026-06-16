@@ -11,6 +11,7 @@ using System.Windows.Media.Imaging;
 using Aquashot.Annotation;
 using Aquashot.Capture;
 using Aquashot.Editor;
+using Aquashot.Recording;
 using Aquashot.Selection;
 using Point = System.Windows.Point;
 using MouseEventArgs = System.Windows.Input.MouseEventArgs;
@@ -66,6 +67,7 @@ public partial class OverlayWindow : Window
 
     public event Action<OverlayWindow>? RegionCommitted;
     public event Action<CapturedFrame, PixelRect, AnnotationDocument>? Confirmed;
+    public event Action<PixelRect, RecordFormats>? RecordRequested;
     public event Action? Cancelled;
 
     [DllImport("user32.dll")]
@@ -576,8 +578,14 @@ public partial class OverlayWindow : Window
 
     private void Confirm()
     {
-        if (_closed) return;
-        if (_doc != null) Confirmed?.Invoke(_frame, _selVirtual, _doc);
+        if (_closed || _doc == null) return;
+        if (_toolbar != null && _toolbar.CurrentOutput != CaptureOutput.Image)
+        {
+            var fmt = _toolbar.CurrentOutput == CaptureOutput.Gif ? RecordFormats.Gif : RecordFormats.Mp4;
+            RecordRequested?.Invoke(_selVirtual, fmt);
+            return;
+        }
+        Confirmed?.Invoke(_frame, _selVirtual, _doc);
     }
 
     private void RaiseCancelled()

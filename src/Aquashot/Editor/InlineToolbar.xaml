@@ -7,6 +7,11 @@
             <DropShadowEffect BlurRadius="18" ShadowDepth="2" Opacity="0.5" Color="#000000"/>
         </Border.Effect>
         <StackPanel Orientation="Horizontal">
+            <RadioButton x:Name="ModeImage" GroupName="omode" Style="{StaticResource ModeChip}" Content="PNG" ToolTip="Screenshot (annotate &amp; save)"/>
+            <RadioButton x:Name="ModeGif"   GroupName="omode" Style="{StaticResource ModeChip}" Content="GIF" ToolTip="Record a GIF of this region"/>
+            <RadioButton x:Name="ModeVideo" GroupName="omode" Style="{StaticResource ModeChip}" Content="MP4" ToolTip="Record a video of this region"/>
+            <Border Width="1" Background="{StaticResource B.Border}" Margin="6,5"/>
+
             <RadioButton x:Name="ToolSelect"  GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Cursor}"  ToolTip="Select / move (drag items, Del to delete)"/>
             <RadioButton x:Name="ToolArrow"   GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Arrow}"   ToolTip="Arrow"/>
             <RadioButton x:Name="ToolRect"    GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Square}"  ToolTip="Rectangle"/>

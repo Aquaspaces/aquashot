@@ -10,6 +10,9 @@ using RadioButton = System.Windows.Controls.RadioButton;
 
 namespace Aquashot.Editor;
 
+// What the Confirm action produces: a screenshot, or a recording in the given format.
+public enum CaptureOutput { Image, Gif, Video }
+
 public partial class InlineToolbar : UserControl
 {
     public event Action<ToolKind>? ToolChanged;
@@ -17,7 +20,9 @@ public partial class InlineToolbar : UserControl
     public event Action? RedoRequested;
     public event Action? ConfirmRequested;
     public event Action? CancelRequested;
+    public event Action<CaptureOutput>? OutputModeChanged;
 
+    public CaptureOutput CurrentOutput { get; private set; } = CaptureOutput.Image;
     public ToolKind CurrentTool { get; private set; } = ToolKind.Arrow;
     public string CurrentColor { get; private set; } = "#FF3B30";
     public double CurrentWidth => WidthSlider.Value;
@@ -51,8 +56,31 @@ public partial class InlineToolbar : UserControl
         BtnConfirm.Click += (_, __) => ConfirmRequested?.Invoke();
         BtnCancel.Click  += (_, __) => CancelRequested?.Invoke();
 
+        ModeImage.Checked += (_, __) => SetOutput(CaptureOutput.Image);
+        ModeGif.Checked   += (_, __) => SetOutput(CaptureOutput.Gif);
+        ModeVideo.Checked += (_, __) => SetOutput(CaptureOutput.Video);
+
         BuildSwatches();
         ToolArrow.IsChecked = true;
+        ModeImage.IsChecked = true;
+    }
+
+    // Recording modes capture the live region, so annotation controls don't apply —
+    // disable them when GIF/MP4 is selected. Confirm then starts recording (handled
+    // by the overlay, which reads CurrentOutput).
+    private void SetOutput(CaptureOutput o)
+    {
+        CurrentOutput = o;
+        bool ann = o == CaptureOutput.Image;
+        foreach (var rb in new RadioButton[]
+                 { ToolSelect, ToolArrow, ToolRect, ToolEllipse, ToolLine, ToolPen, ToolText, ToolCounter })
+            rb.IsEnabled = ann;
+        WidthSlider.IsEnabled = ann;
+        FillToggle.IsEnabled = ann;
+        ColorPanel.IsEnabled = ann;
+        BtnUndo.IsEnabled = ann;
+        BtnRedo.IsEnabled = ann;
+        OutputModeChanged?.Invoke(o);
     }
 
     private void BuildSwatches()
