@@ -35,7 +35,17 @@ dotnet run --project src/Aquashot
 
 The app starts in the system tray (no main window). Press `PrtSc` (or use the tray menu) to capture.
 
-> Note: built with .NET SDK 10 targeting `net8.0-windows` (requires the .NET 8 Windows Desktop runtime/targeting pack). If that pack is unavailable, retarget both projects to `net10.0-windows`.
+> Requires the **.NET 8 Windows Desktop** SDK (targets `net8.0-windows`). A newer
+> SDK (10.x) also builds it as long as the .NET 8 targeting pack is installed; if
+> it isn't, retarget both projects to your installed `netX.0-windows`.
+
+### Screen recording (optional)
+
+GIF/MP4 recording needs an `ffmpeg.exe` that is **not** shipped in this repo. Run
+`pwsh scripts/fetch-ffmpeg.ps1` to fetch one, or drop your own in
+`src/Aquashot/Resources/`. Without it the app runs fine; recording just shows
+"unavailable". Note the licensing consequence of bundling FFmpeg in a release
+binary — see [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
 
 ## Tests
 
@@ -64,3 +74,8 @@ tests/Aquashot.Tests/
 ## Backlog (deferred past v1)
 
 Scrolling capture · OCR / text grab · built-in upload/share · fullscreen / per-monitor one-shot mode · last-region repeat · highlighter tool · post-capture crop · "brighten only the selection" cutout polish · cross-monitor drag clamping.
+
+## License
+
+[WTFPL](LICENSE) — do whatever you want. Third-party components (FFmpeg) carry
+their own terms; see [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
