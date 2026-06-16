@@ -24,6 +24,9 @@ public partial class InlineToolbar : UserControl
     public event Action? EyedropperRequested;
     public event Action? ColorWheelRequested;
     public event Action<CaptureOutput>? OutputModeChanged;
+    public event Action? ColorSampleRequested;    // sample a screen pixel and copy its hex
+    public event Action<int>? DelayedCaptureRequested; // re-capture this region after N seconds
+    public event Action? FreezeToggleRequested;   // show live region / re-freeze a fresh snapshot
 
     public CaptureOutput CurrentOutput { get; private set; } = CaptureOutput.Image;
     public ToolKind CurrentTool { get; private set; } = ToolKind.Arrow;
@@ -62,6 +65,11 @@ public partial class InlineToolbar : UserControl
         ToolEyedropper.Checked += (_, __) => EyedropperRequested?.Invoke();
         BtnColorWheel.Click    += (_, __) => ColorWheelRequested?.Invoke();
         ColorWheelRequested += ShowColorWheel;
+
+        BtnColorCopy.Click += (_, __) => ColorSampleRequested?.Invoke();
+        BtnFreeze.Click    += (_, __) => FreezeToggleRequested?.Invoke();
+        // Delay is a quick menu (3/5/10s); open it under the button on click.
+        BtnDelay.Click += (_, __) => { if (DelayMenu != null) { DelayMenu.PlacementTarget = BtnDelay; DelayMenu.IsOpen = true; } };
 
         ModeImage.Checked += (_, __) => SetOutput(CaptureOutput.Image);
         ModeGif.Checked   += (_, __) => SetOutput(CaptureOutput.Gif);
@@ -140,6 +148,16 @@ public partial class InlineToolbar : UserControl
         CurrentTool = t;
         ToolChanged?.Invoke(t);
     }
+
+    private void Delay3_Click(object sender, RoutedEventArgs e)  => DelayedCaptureRequested?.Invoke(3);
+    private void Delay5_Click(object sender, RoutedEventArgs e)  => DelayedCaptureRequested?.Invoke(5);
+    private void Delay10_Click(object sender, RoutedEventArgs e) => DelayedCaptureRequested?.Invoke(10);
+
+    // Highlight the freeze button while the region is showing the live (un-frozen) desktop.
+    public void SetFreezeActive(bool on) =>
+        BtnFreeze.Foreground = on
+            ? (System.Windows.Media.Brush)FindResource("B.Accent")
+            : (System.Windows.Media.Brush)FindResource("B.Icon");
 
     private System.Windows.Controls.Primitives.Popup? _wheelPopup;
     private Aquashot.ColorPicker.ColorWheelPopup? _wheelPopupView;

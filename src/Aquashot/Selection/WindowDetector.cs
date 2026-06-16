@@ -13,12 +13,15 @@ public class WindowDetector
     private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
     private struct RECT { public int L, T, R, B; }
 
-    public PixelRect? WindowAt(double vx, double vy)
+    // 'exclude' is our own overlay window — it's topmost and covers the whole monitor, so
+    // without skipping it EnumWindows would always report it (the monitor) as the hit.
+    public PixelRect? WindowAt(double vx, double vy, IntPtr exclude = default)
     {
         PixelRect? hit = null;
         EnumWindows((h, _) =>
         {
             if (hit is not null) return true;
+            if (h == exclude) return true;
             if (!IsWindowVisible(h)) return true;
             if (DwmGetWindowAttribute(h, DWMWA_EXTENDED_FRAME_BOUNDS, out var r, Marshal.SizeOf<RECT>()) != 0)
                 if (!GetWindowRect(h, out r)) return true;
