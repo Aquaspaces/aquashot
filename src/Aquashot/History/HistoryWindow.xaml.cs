@@ -180,13 +180,18 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         catch { }
     }
 
-    private Tile? Selected => Grid.SelectedItem as Tile;
+    // The context menu lives in the item DataTemplate; the clicked tile is the menu's DataContext
+    // (right-clicking a tile doesn't select it in the ListBox, so don't rely on Grid.SelectedItem).
+    private static Tile? TileOf(object sender) => (sender as FrameworkElement)?.DataContext as Tile;
 
-    private void Open_Click(object sender, RoutedEventArgs e) => OpenDetailForSelected();
+    private void Open_Click(object sender, RoutedEventArgs e)
+    {
+        if (TileOf(sender) is { } t) OpenDetailFor(t.Path);
+    }
 
     private void Copy_Click(object sender, RoutedEventArgs e)
     {
-        if (Selected is { } t && File.Exists(t.Path))
+        if (TileOf(sender) is { } t && File.Exists(t.Path))
         {
             try
             {
@@ -201,13 +206,13 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
 
     private void Reveal_Click(object sender, RoutedEventArgs e)
     {
-        if (Selected is { } t && File.Exists(t.Path))
+        if (TileOf(sender) is { } t && File.Exists(t.Path))
             Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{t.Path}\"") { UseShellExecute = true });
     }
 
     private void Delete_Click(object sender, RoutedEventArgs e)
     {
-        if (Selected is not { } t) return;
+        if (TileOf(sender) is not { } t) return;
         var ok = System.Windows.MessageBox.Show(this, $"Delete {t.Name}?", "Aquashot",
             MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (ok != MessageBoxResult.Yes) return;
