@@ -277,6 +277,7 @@ public partial class OverlayWindow : Window
         _toolbar.ConfirmRequested += Confirm;
         _toolbar.CancelRequested += RaiseCancelled;
         _toolbar.ToolChanged += OnToolChanged;
+        _toolbar.OutputModeChanged += OnOutputMode;
         Overlay.Children.Add(_toolbar);
 
         ApplySelection(_selVirtual, translateShapes: false, oldSel: _selVirtual);
@@ -574,6 +575,15 @@ public partial class OverlayWindow : Window
         if (_layer == null) return;
         _layer.SelectionBox = _selectedIndex >= 0 ? _doc?.BoundsAt(_selectedIndex) : null;
         _layer.Refresh();
+    }
+
+    // Picking GIF/MP4 in the toolbar starts recording the selected region immediately —
+    // the Record/Stop bar appears inline (no Confirm press needed).
+    private void OnOutputMode(CaptureOutput o)
+    {
+        if (_closed || o == CaptureOutput.Image) return;
+        var fmt = o == CaptureOutput.Gif ? RecordFormats.Gif : RecordFormats.Mp4;
+        RecordRequested?.Invoke(_selVirtual, fmt);
     }
 
     private void Confirm()

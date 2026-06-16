@@ -26,6 +26,14 @@ public class FFmpegArgsTests
     }
 
     [Fact]
+    public void Gdigrab_rounds_odd_dimensions_to_even()
+    {
+        // Odd width/height break yuv420p/NVENC (EINVAL → 0 frames) — must round down to even.
+        var args = FFmpegArgs.CaptureGdigrab(new PixelRect(10, 20, 641, 481), 30, "h264_nvenc", "o.mp4");
+        Join(args).Should().Contain("-video_size 640x480");
+    }
+
+    [Fact]
     public void Ddagrab_capture_uses_lavfi_source_and_crop()
     {
         var args = FFmpegArgs.CaptureDdagrab(new PixelRect(0, 0, 800, 600), 30, "hevc_nvenc", "C:\\t\\mid.mp4");

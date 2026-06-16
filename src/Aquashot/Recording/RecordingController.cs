@@ -38,6 +38,9 @@ public class RecordingController
     public void StartRegion(PixelRect region, double scale, RecordFormats formats)
     {
         _region = region; _scale = scale; _formats = formats;
+        // Pre-warm encoder detection (test-encode probe) now, while the user reads the bar,
+        // so pressing Record starts capture immediately instead of stalling for ~1s. Cached.
+        _ = _detector.DetectAsync(_settings.EncoderOverride == "Auto" ? null : _settings.EncoderOverride);
         _bar = new RecordingControlBar();
         _bar.PlaceAbove(region.X / scale, region.Y / scale);
         _bar.Cancelled += () => { _bar?.Close(); Finished?.Invoke(null, null); };

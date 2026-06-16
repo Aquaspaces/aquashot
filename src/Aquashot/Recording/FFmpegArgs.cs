@@ -9,11 +9,19 @@ public static class FFmpegArgs
 {
     private static string I(double v) => ((int)System.Math.Round(v)).ToString(CultureInfo.InvariantCulture);
 
+    // yuv420p / NVENC / QSV require even dimensions — round down to even (min 2).
+    private static string Even(double v)
+    {
+        int n = (int)System.Math.Round(v);
+        if ((n & 1) == 1) n--;
+        return System.Math.Max(2, n).ToString(CultureInfo.InvariantCulture);
+    }
+
     public static List<string> CaptureGdigrab(PixelRect region, int fps, string encoder, string outPath) => new()
     {
         "-y", "-f", "gdigrab", "-framerate", fps.ToString(), "-draw_mouse", "1",
         "-offset_x", I(region.X), "-offset_y", I(region.Y),
-        "-video_size", $"{I(region.Width)}x{I(region.Height)}", "-i", "desktop",
+        "-video_size", $"{Even(region.Width)}x{Even(region.Height)}", "-i", "desktop",
         "-c:v", encoder, "-pix_fmt", "yuv420p", outPath
     };
 
