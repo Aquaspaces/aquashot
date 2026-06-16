@@ -16,6 +16,7 @@ public class OverlayController
 
     public event Action<CapturedFrame, PixelRect, AnnotationDocument>? Confirmed;
     public event Action<CapturedFrame, PixelRect, RecordFormats>? RecordRequested;
+    public event Action? PinRequested;
     public event Action? Cancelled;
 
     public void Show(IReadOnlyList<CapturedFrame> frames)
@@ -26,6 +27,7 @@ public class OverlayController
             w.RegionCommitted += CloseOthers;
             w.Confirmed += (f, r, d) => { Close(); Confirmed?.Invoke(f, r, d); };
             w.RecordRequested += (r, fmt) => { Close(); RecordRequested?.Invoke(frame, r, fmt); };
+            w.PinRequested += () => { Close(); PinRequested?.Invoke(); };
             w.Cancelled += () => { Close(); Cancelled?.Invoke(); };
             _windows.Add(w);
             w.Show();
