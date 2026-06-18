@@ -30,6 +30,66 @@
             <ComboBoxItem Content="jpg"/>
         </ComboBox>
 
+        <TextBlock Text="DEFAULT CLIPBOARD ACTION" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}"/>
+        <ComboBox x:Name="ClipboardActionBox" Width="160" HorizontalAlignment="Left" Margin="0,4,0,14">
+            <ComboBoxItem Content="Copy image" Tag="Image"/>
+            <ComboBoxItem Content="Copy file" Tag="File"/>
+            <ComboBoxItem Content="Copy path" Tag="Path"/>
+            <ComboBoxItem Content="None" Tag="None"/>
+        </ComboBox>
+
+        <TextBlock Text="RECORDING" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}" Margin="0,0,0,4"/>
+
+        <TextBlock Text="Record FPS" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <ComboBox x:Name="RecordFpsBox" IsEditable="True" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10">
+            <ComboBoxItem Content="10"/>
+            <ComboBoxItem Content="15"/>
+            <ComboBoxItem Content="24"/>
+            <ComboBoxItem Content="30"/>
+            <ComboBoxItem Content="60"/>
+        </ComboBox>
+
+        <TextBlock Text="Output formats" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <ComboBox x:Name="RecordFormatsBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10">
+            <ComboBoxItem Content="Mp4"/>
+            <ComboBoxItem Content="Gif"/>
+            <ComboBoxItem Content="Both"/>
+        </ComboBox>
+
+        <TextBlock Text="Encoder" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <ComboBox x:Name="EncoderBox" IsEditable="True" Width="200" HorizontalAlignment="Left" Margin="0,0,0,10">
+            <ComboBoxItem Content="Auto"/>
+            <ComboBoxItem Content="libx264"/>
+            <ComboBoxItem Content="h264_nvenc"/>
+            <ComboBoxItem Content="hevc_nvenc"/>
+            <ComboBoxItem Content="av1_nvenc"/>
+            <ComboBoxItem Content="h264_qsv"/>
+            <ComboBoxItem Content="h264_amf"/>
+        </ComboBox>
+
+        <TextBlock Text="Max video size (MB, 0 = unlimited)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="MaxVideoSizeBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Max GIF size (MB, 0 = unlimited)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="MaxGifSizeBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="GIF max FPS" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="GifMaxFpsBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="GIF max width (px)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="GifMaxWidthBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="GIF colors (2-256)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="GifColorsBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="GIF dithering" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <ComboBox x:Name="GifDitherBox" Width="160" HorizontalAlignment="Left" Margin="0,0,0,18">
+            <ComboBoxItem Content="none"/>
+            <ComboBoxItem Content="bayer"/>
+            <ComboBoxItem Content="sierra2_4a"/>
+            <ComboBoxItem Content="floyd_steinberg"/>
+        </ComboBox>
+
         <CheckBox x:Name="StartupCheck" Content="Run at Windows startup" Margin="0,0,0,10"/>
         <CheckBox x:Name="EnableOcrCheck" Content="Index screenshot text (OCR) for search" Margin="0,0,0,18"/>
 

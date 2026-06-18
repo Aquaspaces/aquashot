@@ -35,9 +35,9 @@ public static class FFmpegArgs
 
     // Optional overlayPng burns a transparent annotation image over the video (input 1).
     public static List<string> GifPalettegen(string input, int fps, int width, string palettePath,
-        string? overlayPng = null)
+        string? overlayPng = null, int colors = 256)
     {
-        string scale = $"fps={fps},scale={width}:-1:flags=lanczos,palettegen=stats_mode=diff";
+        string scale = $"fps={fps},scale={width}:-1:flags=lanczos,palettegen=stats_mode=diff:max_colors={colors}";
         if (overlayPng == null)
             return new() { "-y", "-i", input, "-vf", scale, palettePath };
         return new()
@@ -48,13 +48,13 @@ public static class FFmpegArgs
     }
 
     public static List<string> GifPaletteuse(string input, string palettePath, int fps, int width, string outPath,
-        string? overlayPng = null)
+        string? overlayPng = null, string dither = "sierra2_4a")
     {
         if (overlayPng == null)
             return new()
             {
                 "-y", "-i", input, "-i", palettePath,
-                "-lavfi", $"fps={fps},scale={width}:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=sierra2_4a",
+                "-lavfi", $"fps={fps},scale={width}:-1:flags=lanczos[x];[x][1:v]paletteuse=dither={dither}",
                 outPath
             };
         // inputs: 0=video, 1=overlay, 2=palette
@@ -62,13 +62,14 @@ public static class FFmpegArgs
         {
             "-y", "-i", input, "-i", overlayPng, "-i", palettePath,
             "-filter_complex",
-            $"[0:v][1:v]overlay=0:0,fps={fps},scale={width}:-1:flags=lanczos[x];[x][2:v]paletteuse=dither=sierra2_4a",
+            $"[0:v][1:v]overlay=0:0,fps={fps},scale={width}:-1:flags=lanczos[x];[x][2:v]paletteuse=dither={dither}",
             outPath
         };
     }
 
+    // maxFileSizeMb caps the output via ffmpeg -fs; pass null to omit the hard size cap (unlimited).
     public static List<string> Mp4Transcode(string input, string encoder, int bitrateKbps, string outPath,
-        string? overlayPng = null)
+        string? overlayPng = null, int? maxFileSizeMb = 49)
     {
         var args = new List<string> { "-y", "-i", input };
         if (overlayPng == null)
@@ -84,8 +85,9 @@ public static class FFmpegArgs
         args.AddRange(new[]
         {
             "-b:v", $"{bitrateKbps}k", "-maxrate", $"{bitrateKbps * 3 / 2}k", "-bufsize", $"{bitrateKbps * 2}k",
-            "-fs", "49M", "-movflags", "+faststart", outPath
         });
+        if (maxFileSizeMb is int mb) { args.Add("-fs"); args.Add($"{mb}M"); }
+        args.AddRange(new[] { "-movflags", "+faststart", outPath });
         return args;
     }
 

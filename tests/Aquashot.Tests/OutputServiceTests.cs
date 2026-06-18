@@ -82,6 +82,73 @@ public class OutputServiceTests
         System.IO.Path.IsPathRooted(path).Should().BeTrue();
     }
 
+    [Fact]
+    public void UniqueRecordingOutputBase_avoids_a_colliding_existing_file()
+    {
+        var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aqua-rec-" + System.Guid.NewGuid().ToString("N"));
+        var settings = new Aquashot.Settings.AppSettings { SaveFolder = dir, FilenamePattern = "Clip_{yyyy}" };
+        try
+        {
+            var baseStem = OutputService.RecordingOutputBase(settings, new System.DateTime(2026, 1, 2));
+            System.IO.File.WriteAllText(baseStem + ".mp4", "x"); // pre-create the colliding file
+
+            var unique = OutputService.UniqueRecordingOutputBase(
+                settings, new System.DateTime(2026, 1, 2), ".mp4", ".gif");
+
+            unique.Should().NotBe(baseStem);
+            unique.Should().Be(baseStem + "-2");
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [Theory]
+    [InlineData(ClipboardMode.Image)]
+    [InlineData(ClipboardMode.None)]
+    [InlineData(ClipboardMode.Path)]
+    public void SaveComposite_writes_a_decodable_png_for_every_clipboard_mode(ClipboardMode clip)
+    {
+        var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aqua-clip-" + System.Guid.NewGuid().ToString("N"));
+        var settings = new Aquashot.Settings.AppSettings { SaveFolder = dir, FilenamePattern = "Shot_{yyyy}", ImageFormat = "png" };
+        try
+        {
+            var path = Sta(() => new OutputService().SaveComposite(Blank(20, 12), settings, new System.DateTime(2026, 1, 2), clip));
+
+            path.Should().EndWith("Shot_2026.png");
+            System.IO.File.Exists(path).Should().BeTrue();
+            // The written file is identical regardless of clipboard mode (write-then-copy).
+            var bytes = System.IO.File.ReadAllBytes(path);
+            var sig = new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 };
+            bytes.Take(8).Should().Equal(sig);
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void SaveComposite_path_mode_puts_the_saved_path_on_the_clipboard_as_text()
+    {
+        var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aqua-clip-" + System.Guid.NewGuid().ToString("N"));
+        var settings = new Aquashot.Settings.AppSettings { SaveFolder = dir, FilenamePattern = "Shot_{yyyy}", ImageFormat = "png" };
+        try
+        {
+            var (path, clipText) = Sta(() =>
+            {
+                var p = new OutputService().SaveComposite(Blank(20, 12), settings, new System.DateTime(2026, 1, 2), ClipboardMode.Path);
+                return (p, System.Windows.Clipboard.GetText());
+            });
+            clipText.Should().Be(path);
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
     private static bool ContainsAscii(byte[] hay, string ascii)
     {
         var needle = System.Text.Encoding.ASCII.GetBytes(ascii);

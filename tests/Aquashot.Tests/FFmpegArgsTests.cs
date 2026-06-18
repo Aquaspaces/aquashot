@@ -77,6 +77,27 @@ public class FFmpegArgsTests
     }
 
     [Fact]
+    public void Mp4_transcode_honors_custom_filesize_cap()
+    {
+        var args = FFmpegArgs.Mp4Transcode("mid.mp4", "libx264", 4000, "out.mp4", maxFileSizeMb: 99);
+        Join(args).Should().Contain("-fs 99M");
+    }
+
+    [Fact]
+    public void GifPalettegen_threads_color_count_into_filter()
+    {
+        var args = FFmpegArgs.GifPalettegen("mid.mp4", 20, 800, "pal.png", colors: 64);
+        Join(args).Should().Contain("palettegen=stats_mode=diff:max_colors=64");
+    }
+
+    [Fact]
+    public void GifPaletteuse_threads_dither_mode_into_filter()
+    {
+        var args = FFmpegArgs.GifPaletteuse("mid.mp4", "pal.png", 20, 800, "out.gif", dither: "bayer");
+        Join(args).Should().Contain("paletteuse=dither=bayer");
+    }
+
+    [Fact]
     public void Mp4_with_overlay_burns_annotation_png()
     {
         var args = FFmpegArgs.Mp4Transcode("mid.mp4", "h264_nvenc", 4000, "out.mp4", "ann.png");

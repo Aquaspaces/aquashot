@@ -110,9 +110,10 @@ public class TrayHost : IDisposable
         {
             var frames = _capture.FreezeAll();
             ctrl = new OverlayController { Mode = mode };
+            ctrl.DefaultClip = ParseClipboardAction(_settings.DefaultClipboardAction);
             ctrl.Refreeze = () => _capture.FreezeAll();           // re-snapshot for the freeze toggle
             ctrl.DelayedCapture += (region, secs) => DelayedRegionCapture(region, secs);
-            ctrl.Confirmed += (f, r, d) =>
+            ctrl.Confirmed += (f, r, d, clip) =>
             {
                 // The overlay is already closed by OverlayController before this fires, but WPF
                 // hasn't repainted yet — the synchronous Save (PNG encode + clipboard + disk) would
@@ -126,9 +127,16 @@ public class TrayHost : IDisposable
                     {
                         try
                         {
-                            var path = _output.Save(f, r, d, _settings, DateTime.Now);
+                            var path = _output.Save(f, r, d, _settings, DateTime.Now, clip);
                             Remember(path);
-                            _icon.ShowBalloonTip(2000, "Aquashot", "Saved & copied: " + path, ToolTipIcon.Info);
+                            var note = clip switch
+                            {
+                                ClipboardMode.None => "Saved: " + path,
+                                ClipboardMode.File => "Saved & file copied: " + path,
+                                ClipboardMode.Path => "Saved & path copied: " + path,
+                                _                  => "Saved & copied: " + path,
+                            };
+                            _icon.ShowBalloonTip(2000, "Aquashot", note, ToolTipIcon.Info);
                         }
                         catch (Exception ex)
                         {
@@ -140,23 +148,31 @@ public class TrayHost : IDisposable
             ctrl.Cancelled += () => _busy = false;
             ctrl.PinRequested += () => _busy = false; // pinned to screen; capture flow is done
 
-            // Recording is driven inline by the capture toolbar; the recorder owns _busy
-            // until it finishes (or errors).
+            // Recording is driven inline by the capture toolbar. The slow encode now runs on a
+            // background thread, so both callbacks marshal back to the UI thread before touching
+            // _icon/_library/_busy.
             var recorder = new Aquashot.Recording.RecordingController(_settings);
-            recorder.Finished += (result, error) =>
-            {
-                _busy = false;
-                if (error != null)
-                    _icon.ShowBalloonTip(3000, "Aquashot", error, ToolTipIcon.Error);
-                else if (result != null)
+            recorder.EncodingStarted += () =>
+                Application.Current.Dispatcher.BeginInvoke(new Action(() =>
                 {
-                    foreach (var file in result.Files) Remember(file);
-                    var note = result.SizeCapForced ? " (reduced to fit 50 MB)" : "";
-                    _icon.ShowBalloonTip(2500, "Aquashot",
-                        "Saved & copied: " + string.Join(", ", result.Files.Select(Path.GetFileName)) + note,
-                        ToolTipIcon.Info);
-                }
-            };
+                    _busy = false; // encoding off-screen; allow a new capture while it runs
+                    _icon.ShowBalloonTip(1500, "Aquashot", "Encoding…", ToolTipIcon.Info);
+                }));
+            recorder.Finished += (result, error) =>
+                Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    _busy = false;
+                    if (error != null)
+                        _icon.ShowBalloonTip(3000, "Aquashot", error, ToolTipIcon.Error);
+                    else if (result != null)
+                    {
+                        foreach (var file in result.Files) Remember(file);
+                        var note = result.SizeCapForced ? $" (reduced to fit {_settings.MaxGifSizeMb} MB)" : "";
+                        _icon.ShowBalloonTip(2500, "Aquashot",
+                            "Saved & copied: " + string.Join(", ", result.Files.Select(Path.GetFileName)) + note,
+                            ToolTipIcon.Info);
+                    }
+                }));
             ctrl.Recorder = recorder;
             ctrl.Show(frames);
         }
@@ -212,6 +228,15 @@ public class TrayHost : IDisposable
         }
         finally { _busy = false; }
     }
+
+    // Parse the configured default clipboard action (case-insensitive), defaulting to Image.
+    private static ClipboardMode ParseClipboardAction(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "file" => ClipboardMode.File,
+        "path" => ClipboardMode.Path,
+        "none" => ClipboardMode.None,
+        _      => ClipboardMode.Image,
+    };
 
     // True when a region's centre falls inside a monitor's bounds.
     private static bool MonitorContains(PixelRect monitor, PixelRect region)

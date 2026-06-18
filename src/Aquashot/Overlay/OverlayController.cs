@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Aquashot.Annotation;
 using Aquashot.Capture;
+using Aquashot.Output;
 using Aquashot.Recording;
 using Aquashot.Selection;
 
@@ -17,10 +18,13 @@ public class OverlayController
     // The headless recording engine the overlay's toolbar drives (set by the tray).
     public RecordingController? Recorder { get; set; }
 
+    // Default clipboard action for the confirm/Stop button (set by the tray from settings).
+    public Aquashot.Output.ClipboardMode DefaultClip { get; set; } = Aquashot.Output.ClipboardMode.Image;
+
     // Supplies a fresh capture of every monitor (the tray's FreezeAll) for re-freeze requests.
     public Func<IReadOnlyList<CapturedFrame>>? Refreeze { get; set; }
 
-    public event Action<CapturedFrame, PixelRect, AnnotationDocument>? Confirmed;
+    public event Action<CapturedFrame, PixelRect, AnnotationDocument, ClipboardMode>? Confirmed;
     public event Action? PinRequested;
     public event Action? Cancelled;
     public event Action<PixelRect, int>? DelayedCapture; // region, seconds — re-capture later
@@ -29,9 +33,9 @@ public class OverlayController
     {
         foreach (var frame in frames)
         {
-            var w = new OverlayWindow(frame) { Mode = Mode, Recorder = Recorder };
+            var w = new OverlayWindow(frame) { Mode = Mode, Recorder = Recorder, DefaultClip = DefaultClip };
             w.RegionCommitted += CloseOthers;
-            w.Confirmed += (f, r, d) => { Close(); Confirmed?.Invoke(f, r, d); };
+            w.Confirmed += (f, r, d, clip) => { Close(); Confirmed?.Invoke(f, r, d, clip); };
             w.PinRequested += () => { Close(); PinRequested?.Invoke(); };
             w.Cancelled += () => { Close(); Cancelled?.Invoke(); };
             w.DelayedCaptureRequested += (r, s) => { Close(); DelayedCapture?.Invoke(r, s); };

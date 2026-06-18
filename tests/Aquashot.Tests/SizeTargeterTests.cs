@@ -33,7 +33,7 @@ public class SizeTargeterTests
     [Fact]
     public void GifPlan_caps_fps_and_width()
     {
-        var (fps, width) = SizeTargeter.GifPlan(1920, requestedFps: 60);
+        var (fps, width) = SizeTargeter.GifPlan(1920, requestedFps: 60, maxFps: 20, maxWidth: 800);
         fps.Should().BeLessThanOrEqualTo(20);
         width.Should().BeLessThanOrEqualTo(800);
     }
@@ -41,9 +41,30 @@ public class SizeTargeterTests
     [Fact]
     public void GifPlan_keeps_small_sources_unchanged()
     {
-        var (fps, width) = SizeTargeter.GifPlan(400, requestedFps: 12);
+        var (fps, width) = SizeTargeter.GifPlan(400, requestedFps: 12, maxFps: 20, maxWidth: 800);
         fps.Should().Be(12);
         width.Should().Be(400);
+    }
+
+    [Fact]
+    public void GifPlan_honors_custom_caps()
+    {
+        var (fps, width) = SizeTargeter.GifPlan(1920, requestedFps: 60, maxFps: 15, maxWidth: 480);
+        fps.Should().Be(15);
+        width.Should().Be(480);
+    }
+
+    [Fact]
+    public void BudgetBytes_zero_is_unlimited()
+    {
+        SizeTargeter.BudgetBytes(0).Should().Be(long.MaxValue);
+        SizeTargeter.BudgetBytes(-5).Should().Be(long.MaxValue);
+    }
+
+    [Fact]
+    public void BudgetBytes_converts_mb_to_bytes()
+    {
+        SizeTargeter.BudgetBytes(50).Should().Be(52428800L);
     }
 
     [Fact]

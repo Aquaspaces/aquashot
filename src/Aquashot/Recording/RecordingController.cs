@@ -26,8 +26,16 @@ public class RecordingController
     private DateTime _startedUtc;
     private bool _stopping;
 
+    private TimeSpan _captureDuration;
+    private string _outBase = "";
+    private FFmpegResult? _capResult;
+
     // result (null on error), error (null on success)
     public event Action<RecordResult?, string?>? Finished;
+
+    // Fired when the (slow) background encode begins — lets the host free its busy flag and
+    // show an "Encoding…" notice while the user can already start another capture.
+    public event Action? EncodingStarted;
 
     public RecordingController(AppSettings settings) => _settings = settings;
 
@@ -76,22 +84,52 @@ public class RecordingController
         return null;
     }
 
-    public async Task StopAsync()
+    // FAST: stop the gdigrab session and snapshot everything the background encode needs, so
+    // the overlay can close immediately. Does NOT encode (see EncodeAndFinishAsync).
+    public async Task StopCaptureAsync()
     {
         _stopping = true;
+        _captureDuration = DateTime.UtcNow - _startedUtc;
+        // Two recordings finishing in the same second would otherwise overwrite each other (the
+        // encode runs in the background, so another capture can start meanwhile) — pick a unique stem.
+        var exts = new List<string>();
+        if (_formats.HasFlag(RecordFormats.Mp4)) exts.Add(".mp4");
+        if (_formats.HasFlag(RecordFormats.Gif)) exts.Add(".gif");
+        _outBase = OutputService.UniqueRecordingOutputBase(_settings, DateTime.Now, exts.ToArray());
+        _capResult = _session == null ? null : await _session.StopAsync();
+        _session = null;
+    }
+
+    // SLOW: runs in the background after the overlay is gone. Encodes the intermediate into
+    // the final files, applies the chosen clipboard action, then fires Finished. Recordings have
+    // no bitmap, so ClipboardMode.Image is treated the same as File (a file-drop).
+    public async Task EncodeAndFinishAsync(ClipboardMode clip)
+    {
+        EncodingStarted?.Invoke();
         try
         {
-            var duration = DateTime.UtcNow - _startedUtc;
-            var capResult = _session == null ? null : await _session.StopAsync();
-            if (capResult is { Ok: false })
-            { Finished?.Invoke(null, "Capture failed: " + Tail(capResult.StderrTail)); Cleanup(); return; }
+            if (_capResult is { Ok: false })
+            { Finished?.Invoke(null, "Capture failed: " + Tail(_capResult.StderrTail)); return; }
 
-            var encoder = new RecordingEncoder(_runner!);
-            var outBase = OutputService.RecordingOutputBase(_settings, DateTime.Now);
-            var result = await encoder.ProduceAsync(_intermediate, _encoderName,
-                _formats, duration, (int)_region.Width, _settings.RecordFps, outBase, _overlayPng);
+            var encoder = new RecordingEncoder(_runner!,
+                videoBudgetBytes: SizeTargeter.BudgetBytes(_settings.MaxVideoSizeMb),
+                gifBudgetBytes:   SizeTargeter.BudgetBytes(_settings.MaxGifSizeMb));
+            var result = await encoder.ProduceAsync(_intermediate, _encoderName, _formats, _captureDuration,
+                (int)_region.Width, _settings.RecordFps, _outBase, _overlayPng,
+                new GifOptions(_settings.GifMaxFps, _settings.GifMaxWidth, _settings.GifColors, _settings.GifDither));
 
-            foreach (var f in result.Files) OutputService.CopyFileToClipboard(f); // last wins on clipboard
+            // Apply the clipboard action to the produced files (last file wins on the clipboard).
+            var last = result.Files.Count > 0 ? result.Files[^1] : null;
+            if (last != null)
+            {
+                switch (clip)
+                {
+                    case ClipboardMode.Image: // no bitmap for a recording — copy the file instead
+                    case ClipboardMode.File: OutputService.CopyFileToClipboard(last); break;
+                    case ClipboardMode.Path: OutputService.CopyPathToClipboard(last); break;
+                    case ClipboardMode.None: break;
+                }
+            }
             Finished?.Invoke(result, null);
         }
         catch (Exception ex) { Finished?.Invoke(null, ex.Message); }

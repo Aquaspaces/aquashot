@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Media.Imaging;
@@ -26,20 +27,29 @@ public class OutputService
     }
 
     public string Save(CapturedFrame frame, PixelRect cropVirtual, AnnotationDocument doc,
-        AppSettings settings, DateTime now)
+        AppSettings settings, DateTime now, ClipboardMode clip = ClipboardMode.Image)
     {
-        return SaveComposite(Compose(frame, cropVirtual, doc), settings, now);
+        return SaveComposite(Compose(frame, cropVirtual, doc), settings, now, clip);
     }
 
-    public string SaveComposite(BitmapSource image, AppSettings settings, DateTime now)
+    public string SaveComposite(BitmapSource image, AppSettings settings, DateTime now,
+        ClipboardMode clip = ClipboardMode.Image)
     {
         if (image.CanFreeze && !image.IsFrozen) image.Freeze();
-        SetClipboardImage(image);
 
         Directory.CreateDirectory(settings.SaveFolder);
         string file = Path.Combine(settings.SaveFolder,
             FilenameGenerator.Generate(settings.FilenamePattern, settings.ImageFormat, now));
         File.WriteAllBytes(file, Encode(image, settings.ImageFormat));
+
+        // Apply the clipboard action after the file is written so Path mode can copy the path.
+        switch (clip)
+        {
+            case ClipboardMode.Image: SetClipboardImage(image); break;
+            case ClipboardMode.File: CopyFileToClipboard(file); break;
+            case ClipboardMode.Path: SetClipboardText(file); break;
+            case ClipboardMode.None: break;
+        }
         return file;
     }
 
@@ -67,6 +77,19 @@ public class OutputService
         }
     }
 
+    // Copy plain text (the saved file path) to the clipboard, with the same retry loop.
+    private static void SetClipboardText(string text) => CopyPathToClipboard(text);
+
+    // Copy a file path as plain text to the clipboard (reusable by recordings), with a retry loop.
+    public static void CopyPathToClipboard(string path)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try { Clipboard.SetText(path); return; }
+            catch (ExternalException) when (attempt < 8) { Thread.Sleep(60); }
+        }
+    }
+
     // Folder + filename stem (no extension) for a recording, e.g. ...\Screenshots\Clip_2026
     public static string RecordingOutputBase(AppSettings settings, DateTime now)
     {
@@ -76,6 +99,24 @@ public class OutputService
         if (name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
             name = name[..^4];
         return Path.Combine(settings.SaveFolder, name);
+    }
+
+    // Like RecordingOutputBase but collision-proof: if any of {stem+ext} already exist for the
+    // given exts, appends "-2", "-3", … to the stem until none collide. Returns the stem only.
+    public static string UniqueRecordingOutputBase(AppSettings settings, DateTime now, params string[] exts)
+    {
+        var baseStem = RecordingOutputBase(settings, now);
+        if (exts.Length == 0) return baseStem;
+
+        bool Collides(string stem) =>
+            exts.Any(ext => File.Exists(stem + "." + ext.TrimStart('.')));
+
+        if (!Collides(baseStem)) return baseStem;
+        for (int n = 2; ; n++)
+        {
+            var candidate = baseStem + "-" + n;
+            if (!Collides(candidate)) return candidate;
+        }
     }
 
     // Put the produced file on the clipboard as a file-drop (paste into Discord/Explorer).

@@ -12,6 +12,7 @@ using System.Windows.Media.Imaging;
 using Aquashot.Annotation;
 using Aquashot.Capture;
 using Aquashot.Editor;
+using Aquashot.Input;
 using Aquashot.Output;
 using Aquashot.Pin;
 using Aquashot.Recording;
@@ -73,12 +74,17 @@ public partial class OverlayWindow : Window
 
     // Set by OverlayController before the window is shown; drives in-toolbar recording.
     public RecordingController? Recorder { get; set; }
+
+    // Default clipboard action for the confirm/Stop button (set by the controller from settings).
+    // Per-capture shortcuts (Ctrl+S / Ctrl+D / Ctrl+C) override it.
+    public Aquashot.Output.ClipboardMode DefaultClip { get; set; } = Aquashot.Output.ClipboardMode.Image;
     private bool _recording;
+    private GlobalEscHook? _escHook;          // catches Esc while the region is click-through
     private readonly System.Windows.Threading.DispatcherTimer _recTimer =
         new() { Interval = TimeSpan.FromSeconds(1) };
 
     public event Action<OverlayWindow>? RegionCommitted;
-    public event Action<CapturedFrame, PixelRect, AnnotationDocument>? Confirmed;
+    public event Action<CapturedFrame, PixelRect, AnnotationDocument, ClipboardMode>? Confirmed;
     public event Action? PinRequested;
     public event Action? Cancelled;
     public event Action<PixelRect, int>? DelayedCaptureRequested; // region, seconds
@@ -160,6 +166,8 @@ public partial class OverlayWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _closed = true;
+        _escHook?.Dispose(); // guard against double-dispose (StopRecordingAsync may have run first)
+        _escHook = null;
         base.OnClosed(e);
     }
 
@@ -250,14 +258,27 @@ public partial class OverlayWindow : Window
     {
         if (e.Key == Key.Escape)
         {
-            if (_recording) { OnPrimary(); return; } // Esc stops & finalizes a recording
+            // Esc stops & finalizes a recording (Stop & save) with the default clipboard action.
+            if (_recording) { _ = StopRecordingAsync(RecordingClip(DefaultClip)); return; }
             RaiseCancelled();
             return;
         }
         if (_phase == Phase.Annotating)
         {
+            // Recording lives in the annotating phase; branch on _recording first so Ctrl+S/Ctrl+D
+            // pick a clipboard action for the produced clip instead of the still-image paths.
+            if (_recording)
+            {
+                if (e.Key == Key.S && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
+                    _ = StopRecordingAsync(ClipboardMode.None);
+                else if (e.Key == Key.D && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
+                    _ = StopRecordingAsync(ClipboardMode.Path);
+                return;
+            }
             if (e.Key == Key.Enter) OnPrimary();
-            else if (e.Key == Key.C && (Keyboard.Modifiers & ModifierKeys.Control) != 0) OnPrimary();
+            else if (e.Key == Key.C && (Keyboard.Modifiers & ModifierKeys.Control) != 0) ConfirmImage(ClipboardMode.Image);
+            else if (e.Key == Key.S && (Keyboard.Modifiers & ModifierKeys.Control) != 0) ConfirmImage(ClipboardMode.None);
+            else if (e.Key == Key.D && (Keyboard.Modifiers & ModifierKeys.Control) != 0) ConfirmImage(ClipboardMode.Path);
             else if (e.Key == Key.Z && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc!.Undo(); ClearSelection(); _layer!.Refresh(); }
             else if (e.Key == Key.Y && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc!.Redo(); ClearSelection(); _layer!.Refresh(); }
             else if ((e.Key == Key.Delete || e.Key == Key.Back) && _selectedIndex >= 0)
@@ -681,14 +702,26 @@ public partial class OverlayWindow : Window
     private void OnPrimary()
     {
         if (_closed || _doc == null) return;
-        if (_recording) { _ = StopRecordingAsync(); return; }
+        if (_recording) { _ = StopRecordingAsync(RecordingClip(DefaultClip)); return; }
         if (_toolbar!.CurrentOutput == CaptureOutput.Image)
         {
-            Confirmed?.Invoke(_frame, _selVirtual, _doc);
+            ConfirmImage(DefaultClip);
             return;
         }
         _ = StartRecordingAsync();
     }
+
+    // Confirm the screenshot with a clipboard choice (Image: copy bitmap, File: copy a file-drop,
+    // Path: copy the saved file path, None: just save). No-op outside the still-image annotate phase.
+    private void ConfirmImage(ClipboardMode clip)
+    {
+        if (_closed || _doc == null || _recording || _toolbar!.CurrentOutput != CaptureOutput.Image) return;
+        Confirmed?.Invoke(_frame, _selVirtual, _doc, clip);
+    }
+
+    // Recordings can't copy a bitmap, so map Image -> File (a file-drop); other modes pass through.
+    private static ClipboardMode RecordingClip(ClipboardMode c) =>
+        c == ClipboardMode.Image ? ClipboardMode.File : c;
 
     // Start recording inline: carve a hole in this (opaque, hardware-accelerated) window
     // over the region so the live screen shows through and stays interactive, while the
@@ -710,7 +743,25 @@ public partial class OverlayWindow : Window
         var err = await Recorder.StartAsync(_selVirtual, fmt, annPng);
         if (err != null) { if (!_closed) Close(); return; } // recorder surfaces the error via Finished
 
+        // If the overlay was closed/cancelled during the awaited encoder detection, the capture
+        // session is now live but the window is gone. Tear it down through the normal stop path so
+        // the ffmpeg process is stopped, temp files are cleaned, and the tray's busy flag is freed
+        // (via the controller's EncodingStarted/Finished events) — never install a hook/timer on a
+        // dead window.
+        if (_closed)
+        {
+            await Recorder.StopCaptureAsync();
+            _ = Recorder.EncodeAndFinishAsync(ClipboardMode.None); // fire & forget; releases _busy + cleans up
+            return;
+        }
+
         _recording = true;
+
+        // The region is now a click-through hole, so keyboard focus can leave the overlay.
+        // A low-level hook keeps Esc working (Esc during recording = Stop & save, like the button).
+        _escHook = new GlobalEscHook(() =>
+            Dispatcher.BeginInvoke(new Action(() => { if (_recording) OnPrimary(); })));
+
         _toolbar.SetPrimary("Stop", "#E03B3B");
         _toolbar.ShowTimer(true);
         _toolbar.SetTimer("00:00");
@@ -753,12 +804,21 @@ public partial class OverlayWindow : Window
         _toolbar!.SetTimer($"{(int)t.TotalMinutes:00}:{t.Seconds:00}");
     }
 
-    private async Task StopRecordingAsync()
+    private async Task StopRecordingAsync(ClipboardMode clip)
     {
         _recTimer.Stop();
         _recTimer.Tick -= OnRecTick;
         _recording = false;
-        if (Recorder != null) await Recorder.StopAsync();
+        _escHook?.Dispose();
+        _escHook = null;
+
+        if (Recorder != null)
+        {
+            // Stop the live capture (fast), then kick off the slow encode in the background and
+            // close immediately so Stop feels instant — the encode finishes off-screen.
+            await Recorder.StopCaptureAsync();
+            _ = Recorder.EncodeAndFinishAsync(clip); // fire & forget — do NOT await the encode
+        }
         if (!_closed) Close();
     }
 
