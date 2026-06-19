@@ -52,14 +52,20 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
     private readonly CaptureLibrary _lib;
     private readonly OcrIndexer _indexer;
     private readonly IOcrService _ocr;
-    private readonly string _saveFolder;
-    private readonly bool _enableOcr;
+    // Settings-derived state is refreshed on-demand via ApplySettings so an open window doesn't keep
+    // sharing/OCR/save-folder from a stale snapshot after the user saves new settings.
+    private string _saveFolder;
+    private bool _enableOcr;
     private readonly Action<int> _persistThumbSize;
     private readonly Func<BitmapSource, string>? _reannotateSave;
+    private Aquashot.Settings.AppSettings _settings;
 
     private readonly ThumbnailCache _thumbs = new();
     private List<Tile> _filtered = new();
     private int _detailIndex = -1;
+
+    // Cancels in-flight share uploads when the window closes (so a slow upload can't outlive it).
+    private readonly System.Threading.CancellationTokenSource _lifetimeCts = new();
 
     // Debounce timers: keystroke -> rebuild, and detail step -> heavy decode.
     private readonly DispatcherTimer _searchTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
@@ -76,6 +82,21 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
 
     // Generation token so a stale async thumbnail decode can't overwrite a fresher Refresh.
     private int _refreshGen;
+
+    // Set on close so async continuations bail before touching a torn-down visual tree.
+    private bool _closed;
+
+    // Windows reserved device names: a file named "CON.png" etc. can hang or corrupt File.Copy.
+    private static readonly HashSet<string> ReservedNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "CON", "PRN", "AUX", "NUL",
+        "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    };
+
+    // True when a file name's stem (without extension) is a Windows reserved device name.
+    private static bool IsReservedName(string fileName) =>
+        ReservedNames.Contains(Path.GetFileNameWithoutExtension(fileName));
 
     // Hover-play: at most one GIF animates at a time.
     private GifAnimator.Clip? _hoverClip;
@@ -105,13 +126,14 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
 
     public HistoryWindow(CaptureLibrary lib, OcrIndexer indexer, IOcrService ocr,
         string saveFolder, bool enableOcr, int thumbSize, Action<int> persistThumbSize,
-        Func<BitmapSource, string>? reannotateSave = null)
+        Func<BitmapSource, string>? reannotateSave = null, Aquashot.Settings.AppSettings? settings = null)
     {
         InitializeComponent();
         DataContext = this;
         _lib = lib; _indexer = indexer; _ocr = ocr; _saveFolder = saveFolder;
         _enableOcr = enableOcr; _persistThumbSize = persistThumbSize;
         _reannotateSave = reannotateSave;
+        _settings = settings ?? new Aquashot.Settings.AppSettings();
 
         TileSize = Math.Clamp(thumbSize, 120, 480);
         SizeSlider.Value = TileSize;
@@ -138,6 +160,7 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         BtnClose.Click += (_, __) => CloseDetail();
         BtnCopyText.Click += (_, __) => CopyAllText();
         BtnCopyImage.Click += (_, __) => CopyCurrentImage();
+        BtnShare.Click += (_, __) => ShareCurrent();
         BtnEdit.Click += (_, __) => EditCurrent();
         ShowTextCheck.Click += (_, __) => Overlay.SetTextVisible(ShowTextCheck.IsChecked == true);
         PreviewKeyDown += OnKey;
@@ -186,7 +209,7 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         foreach (var tile in _filtered)
         {
             tile.Thumb = _thumbs.TryGet(tile.Path, w);
-            if (tile.Thumb == null) FillThumbAsync(tile, w, gen);
+            if (tile.Thumb == null) _ = FillThumbAsync(tile, w, gen);
         }
 
         Grid.ItemsSource = _filtered;
@@ -201,10 +224,14 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private async void FillThumbAsync(Tile tile, int decodeWidth, int gen)
+    private async Task FillThumbAsync(Tile tile, int decodeWidth, int gen)
     {
-        var bi = await _thumbs.GetAsync(tile.Path, decodeWidth);
-        if (gen == _refreshGen && bi != null) tile.Thumb = bi; // ignore stale decodes
+        try
+        {
+            var bi = await _thumbs.GetAsync(tile.Path, decodeWidth);
+            if (gen == _refreshGen && bi != null) tile.Thumb = bi; // ignore stale decodes
+        }
+        catch { /* a failed/OOM decode must never crash the dispatcher; leave the placeholder */ }
     }
 
     private void OpenDetailForSelected()
@@ -266,7 +293,10 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
             if (_detailIndex != index) return; // user already stepped away; drop this stale image
             Overlay.SetImage(full);
             // SetImage clears the overlay; re-apply cached OCR lines, mapped with the TRUE source
-            // dims so they line up even though the displayed bitmap is downscaled.
+            // dims so they line up even though the displayed bitmap is downscaled. Re-verify the
+            // landed path (a rapid second ShowDetail can move _detailIndex onto a different file).
+            if (!string.Equals(_filtered.ElementAtOrDefault(_detailIndex)?.Path, path, StringComparison.OrdinalIgnoreCase))
+                return;
             if (_ocrCache.TryGetValue(path, out var oc)) Overlay.SetLines(oc.Lines, oc.SrcW, oc.SrcH);
         }
     }
@@ -335,6 +365,23 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         DetailPanel.Visibility = Visibility.Collapsed;
         Grid.Visibility = Visibility.Visible;
         _detailIndex = -1;
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _closed = true;
+        try { _lifetimeCts.Cancel(); } catch { }
+        _lifetimeCts.Dispose();
+        base.OnClosed(e);
+    }
+
+    // Refresh the window's settings-derived state in place (called after the user saves new settings
+    // while this window is open), so sharing/OCR/save-folder/re-annotate all use the latest values.
+    public void ApplySettings(Aquashot.Settings.AppSettings settings)
+    {
+        _settings = settings;
+        _saveFolder = settings.SaveFolder;
+        _enableOcr = settings.EnableOcr;
     }
 
     // ===== Filmstrip =====
@@ -408,6 +455,52 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
             System.Windows.Clipboard.SetImage(img);
         }
         catch { }
+    }
+
+    // ===== Share: upload the file and copy a formatted link to the clipboard =====
+
+    private void ShareCurrent()
+    {
+        if (_detailIndex < 0 || _detailIndex >= _filtered.Count) return;
+        _ = ShareTileAsync(_filtered[_detailIndex].Path);
+    }
+
+    // Upload via the configured provider, then copy the formatted URL. Best-effort: a missing
+    // provider or an upload failure surfaces a message box; the gallery is never left in a bad state.
+    private async Task ShareTileAsync(string path)
+    {
+        if (!File.Exists(path)) return;
+        var uploader = Aquashot.Share.ShareService.For(_settings);
+        if (uploader == null)
+        {
+            System.Windows.MessageBox.Show(this,
+                "No upload provider configured. Pick Imgur or Custom in Settings.", "Aquashot");
+            return;
+        }
+        BtnShare.IsEnabled = false;
+        try
+        {
+            var result = await uploader.UploadAsync(path, _settings, _lifetimeCts.Token);
+            if (_closed) return; // window torn down mid-upload; nothing to report or re-enable
+            if (result.Ok && result.Url != null)
+            {
+                var text = Aquashot.Share.ShareService.FormatCopy(
+                    result.Url, _settings.ShareCopyFormat, Path.GetFileName(path));
+                try { System.Windows.Clipboard.SetText(text); } catch { }
+                System.Windows.MessageBox.Show(this, "Link copied to clipboard:\n" + result.Url, "Aquashot");
+            }
+            else
+            {
+                System.Windows.MessageBox.Show(this,
+                    "Upload failed: " + (result.Error ?? "unknown error"), "Aquashot");
+            }
+        }
+        finally
+        {
+            // Only touch the button if the visual tree is still live (the context-menu path can fire
+            // when the detail panel isn't open, and the window may have closed during the upload).
+            if (!_closed && IsLoaded) BtnShare.IsEnabled = true;
+        }
     }
 
     // ===== Hover-play GIFs in the grid (one at a time) =====
@@ -539,27 +632,38 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
 
     private async void Window_Drop(object sender, System.Windows.DragEventArgs e)
     {
-        if (!HasDroppableFiles(e)) return;
-        var files = (string[])e.Data.GetData(System.Windows.DataFormats.FileDrop)!;
-        bool added = false;
-        foreach (var src in files.Where(f => DropExts.Contains(Path.GetExtension(f).ToLowerInvariant())))
+        // Top-level guard: this is an async void dispatcher continuation, so any escaped exception
+        // (e.g. OperationCanceledException at shutdown) would crash the app instead of being handled.
+        try
         {
-            try
+            if (!HasDroppableFiles(e)) return;
+            var files = (string[])e.Data.GetData(System.Windows.DataFormats.FileDrop)!;
+            bool added = false;
+            foreach (var src in files.Where(f => DropExts.Contains(Path.GetExtension(f).ToLowerInvariant())))
             {
-                if (!File.Exists(src)) continue;
-                Directory.CreateDirectory(_saveFolder);
-                var dest = NonCollidingPath(_saveFolder, Path.GetFileName(src));
-                // Defense-in-depth: never let a crafted name escape the save folder.
-                if (!Path.GetFullPath(dest).StartsWith(
-                        Path.GetFullPath(_saveFolder), StringComparison.OrdinalIgnoreCase)) continue;
-                File.Copy(src, dest);
-                _lib.Add(dest, DateTime.Now);
-                if (_enableOcr) await _indexer.EnqueueAsync(dest);
-                added = true;
+                try
+                {
+                    if (!File.Exists(src)) continue;
+                    var fileName = Path.GetFileName(src);
+                    // Reject Windows reserved device names ("CON.png", "NUL", "COM1"…): File.Copy into
+                    // them can hang or corrupt, and File.Exists never reports them as colliding.
+                    if (IsReservedName(fileName)) continue;
+                    Directory.CreateDirectory(_saveFolder);
+                    var dest = NonCollidingPath(_saveFolder, fileName);
+                    // Defense-in-depth: never let a crafted name escape the save folder.
+                    if (!Path.GetFullPath(dest).StartsWith(
+                            Path.GetFullPath(_saveFolder), StringComparison.OrdinalIgnoreCase)) continue;
+                    if (IsReservedName(Path.GetFileName(dest))) continue;
+                    File.Copy(src, dest);
+                    _lib.Add(dest, DateTime.Now);
+                    if (_enableOcr) await _indexer.EnqueueAsync(dest);
+                    added = true;
+                }
+                catch { /* skip files we can't import */ }
             }
-            catch { /* skip files we can't import */ }
+            if (added) Refresh();
         }
-        if (added) Refresh();
+        catch { /* never let a drop crash the app */ }
     }
 
     // Append " (n)" before the extension until the path is free, so an import never overwrites.
@@ -597,14 +701,25 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         }
         catch { return; }
 
-        var editor = new Aquashot.Editor.AnnotationEditorWindow(source, flattened =>
+        var editor = new Aquashot.Editor.AnnotationEditorWindow(source, _settings, _enableOcr ? _ocr : null, flattened =>
         {
             try
             {
-                if (flattened.CanFreeze && !flattened.IsFrozen) flattened.Freeze();
-                var saved = _reannotateSave(flattened); // persists + library.Add + OCR enqueue (TrayHost)
-                Refresh();
-                OpenDetailFor(saved);
+                if (flattened.CanFreeze && !flattened.IsFrozen) flattened.Freeze(); // freeze so it crosses threads
+                // _reannotateSave bottoms out in a clipboard write that can spin ~0.5s on retries;
+                // run it off the UI thread so the editor/gallery don't freeze, then marshal back.
+                _ = Task.Run(() =>
+                {
+                    string saved;
+                    try { saved = _reannotateSave(flattened); } // persists + library.Add + OCR enqueue (TrayHost)
+                    catch { return; }
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (_closed) return;
+                        Refresh();
+                        OpenDetailFor(saved);
+                    }));
+                });
             }
             catch { }
         });
@@ -629,6 +744,11 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
     private void Copy_Click(object sender, RoutedEventArgs e)
     {
         if (TileOf(sender) is { } t && File.Exists(t.Path)) CopyImageToClipboard(t.Path);
+    }
+
+    private void Share_Click(object sender, RoutedEventArgs e)
+    {
+        if (TileOf(sender) is { } t && File.Exists(t.Path)) _ = ShareTileAsync(t.Path);
     }
 
     private void Reveal_Click(object sender, RoutedEventArgs e)

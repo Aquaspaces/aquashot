@@ -45,6 +45,10 @@ public class GraphicsCaptureService : ICaptureService
         return frames;
     }
 
+    // Grab a single arbitrary virtual-desktop region live (used by scrolling capture, which
+    // re-grabs the same rect between scrolls). Returns a frozen BGRA snapshot.
+    public BitmapSource GrabRegion(PixelRect r) => Grab(r);
+
     private static BitmapSource Grab(PixelRect r)
     {
         int w = (int)r.Width, h = (int)r.Height;

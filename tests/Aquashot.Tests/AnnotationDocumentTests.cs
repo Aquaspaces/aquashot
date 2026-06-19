@@ -1,3 +1,4 @@
+using System.Linq;
 using FluentAssertions;
 using Aquashot.Annotation;
 using Xunit;
@@ -100,5 +101,43 @@ public class AnnotationDocumentTests
         doc.Add(new LineShape(0, 0, 100, 100, "#FF0000", 3));
         doc.HitTest(50, 50).Should().Be(0);    // on the line
         doc.HitTest(90, 10).Should().Be(-1);   // inside bbox corner but far from the line
+    }
+
+    [Fact]
+    public void TranslateAll_MovesHighlightPointsAndSpotlightRect()
+    {
+        var doc = new AnnotationDocument();
+        doc.Add(new HighlightShape(new (double, double)[] { (0, 0), (10, 0) }, "#FFFF00", 18, 0.4));
+        doc.Add(new SpotlightShape(5, 5, 20, 20, "#A6000000"));
+        doc.Add(new BlurShape(1, 1, 10, 10, 8));
+        doc.TranslateAll(3, -2);
+
+        var h = (HighlightShape)doc.Shapes[0];
+        h.Points[0].Should().Be((3, -2));
+        var sp = (SpotlightShape)doc.Shapes[1];
+        sp.X.Should().Be(8); sp.Y.Should().Be(3);
+        var b = (BlurShape)doc.Shapes[2];
+        b.X.Should().Be(4); b.Y.Should().Be(-1);
+    }
+
+    [Fact]
+    public void RemoveAllOfType_KeepsOnlyOneSpotlight()
+    {
+        var doc = new AnnotationDocument();
+        doc.Add(new SpotlightShape(0, 0, 10, 10, "#A6000000"));
+        doc.Add(new RectShape(0, 0, 5, 5, "#FF0000", 2));
+        doc.RemoveAllOfType<SpotlightShape>().Should().Be(1);
+        doc.Add(new SpotlightShape(1, 1, 10, 10, "#A6000000"));
+        doc.Shapes.OfType<SpotlightShape>().Should().ContainSingle();
+        doc.Shapes.Should().HaveCount(2); // the rect survived
+    }
+
+    [Fact]
+    public void ReplaceAll_SwapsTheEntireList()
+    {
+        var doc = new AnnotationDocument();
+        doc.Add(Rect());
+        doc.ReplaceAll(new Shape[] { new RectShape(1, 1, 2, 2, "#00FF00", 1), new RectShape(3, 3, 2, 2, "#00FF00", 1) });
+        doc.Shapes.Should().HaveCount(2);
     }
 }

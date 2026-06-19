@@ -1,0 +1,48 @@
+<Window x:Class="Aquashot.Overlay.TrimWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Trim recording" WindowStyle="None" ResizeMode="NoResize"
+        AllowsTransparency="True" Background="Transparent" Topmost="True"
+        ShowInTaskbar="False" SizeToContent="Manual" Width="460" Height="220"
+        WindowStartupLocation="CenterScreen" UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Display">
+    <Border CornerRadius="12" Background="{StaticResource B.Surface}"
+            BorderBrush="{StaticResource B.Border}" BorderThickness="1" Padding="18">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="28" ShadowDepth="0" Opacity="0.7" Color="#000000"/>
+        </Border.Effect>
+        <StackPanel>
+            <TextBlock Text="Trim recording" FontSize="16" FontWeight="SemiBold"
+                       Foreground="{StaticResource B.Text}" Margin="0,0,0,2"/>
+            <TextBlock Text="Drag the in/out points; paused gaps are already removed."
+                       FontSize="12" Foreground="{StaticResource B.TextDim}" Margin="0,0,0,14"/>
+
+            <TextBlock Text="Start" FontSize="12" Foreground="{StaticResource B.TextDim}"/>
+            <DockPanel Margin="0,0,0,8">
+                <TextBlock x:Name="StartLabel" DockPanel.Dock="Right" Width="72" TextAlignment="Right"
+                           FontFamily="Consolas" Foreground="{StaticResource B.Text}"/>
+                <Slider x:Name="StartSlider" Minimum="0" SmallChange="0.1" LargeChange="1"
+                        Foreground="{StaticResource B.Accent}" VerticalAlignment="Center"/>
+            </DockPanel>
+
+            <TextBlock Text="End" FontSize="12" Foreground="{StaticResource B.TextDim}"/>
+            <DockPanel Margin="0,0,0,14">
+                <TextBlock x:Name="EndLabel" DockPanel.Dock="Right" Width="72" TextAlignment="Right"
+                           FontFamily="Consolas" Foreground="{StaticResource B.Text}"/>
+                <Slider x:Name="EndSlider" Minimum="0" SmallChange="0.1" LargeChange="1"
+                        Foreground="{StaticResource B.Accent}" VerticalAlignment="Center"/>
+            </DockPanel>
+
+            <DockPanel>
+                <TextBlock x:Name="KeptLabel" Foreground="{StaticResource B.TextDim}" FontSize="12"
+                           VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="CancelBtn" Content="Keep full" Style="{StaticResource GhostButton}"
+                            Margin="0,0,8,0" Click="Cancel_Click"/>
+                    <Button x:Name="OkBtn" Content="Trim" Style="{StaticResource ModernButton}"
+                            Click="Ok_Click"/>
+                </StackPanel>
+            </DockPanel>
+        </StackPanel>
+    </Border>
+</Window>

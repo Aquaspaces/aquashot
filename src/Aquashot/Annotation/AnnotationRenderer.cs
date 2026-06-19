@@ -12,12 +12,17 @@ using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
 using FlowDirection = System.Windows.FlowDirection;
 using Point = System.Windows.Point;
+using Size = System.Windows.Size;
 
 namespace Aquashot.Annotation;
 
 public class AnnotationRenderer
 {
-    public void Draw(DrawingContext dc, IReadOnlyList<Shape> shapes, BitmapSource? source = null)
+    // canvasSize is required to draw a SpotlightShape (it dims everything OUTSIDE its rect, so it
+    // needs the full surface size). When null and a spotlight exists, the union of shape bounds is
+    // used as a fallback — real call sites always pass the actual render size.
+    public void Draw(DrawingContext dc, IReadOnlyList<Shape> shapes, BitmapSource? source = null,
+        Size? canvasSize = null)
     {
         foreach (var s in shapes)
         {
@@ -39,14 +44,29 @@ public class AnnotationRenderer
                 case PenShape p:
                     DrawPen(dc, p);
                     break;
+                case HighlightShape h:
+                    DrawHighlight(dc, h);
+                    break;
+                case BlurShape b:
+                    DrawPixelEffect(dc, source, b.X, b.Y, b.W, b.H, src => Redaction.PixelEffects.Blur(src, b.Radius));
+                    break;
+                case PixelateShape pix:
+                    DrawPixelEffect(dc, source, pix.X, pix.Y, pix.W, pix.H, src => Redaction.PixelEffects.Pixelate(src, pix.Block));
+                    break;
                 case TextShape t:
                     DrawText(dc, t);
                     break;
                 case CounterShape c:
                     DrawCounter(dc, c);
                     break;
+                // SpotlightShape is drawn in a second pass below so it sits over everything.
             }
         }
+
+        // Second pass: spotlights dim everything outside their rect, so draw them last.
+        foreach (var s in shapes)
+            if (s is SpotlightShape sp)
+                DrawSpotlight(dc, sp, canvasSize ?? UnionSize(shapes));
     }
 
     // Annotations only, on a transparent canvas of the crop size — used to overlay
@@ -56,7 +76,7 @@ public class AnnotationRenderer
         int w = Math.Max(1, width), h = Math.Max(1, height);
         var dv = new DrawingVisual();
         using (var dc = dv.RenderOpen())
-            Draw(dc, shapes);
+            Draw(dc, shapes, null, new Size(w, h)); // no source: blur/pixelate are no-ops here
         var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
         rtb.Render(dv);
         rtb.Freeze();
@@ -68,13 +88,25 @@ public class AnnotationRenderer
         int cx = (int)crop.X, cy = (int)crop.Y;
         int cw = Math.Max(1, (int)crop.Width), ch = Math.Max(1, (int)crop.Height);
         var cropped = new CroppedBitmap(baseImage, new Int32Rect(cx, cy, cw, ch));
+
+        // Preserve the source DPI so the result's metadata is correct and a chained Flatten (e.g.
+        // crop-then-save) maps coordinates 1:1. Shapes are authored in image-PIXEL space, so we draw
+        // in a DIP coordinate system scaled to pixels (the RTB renders at the source DPI, turning
+        // each logical pixel-unit back into one device pixel).
+        double dpiX = baseImage.DpiX > 0 ? baseImage.DpiX : 96;
+        double dpiY = baseImage.DpiY > 0 ? baseImage.DpiY : 96;
+        double dipW = cw * 96.0 / dpiX, dipH = ch * 96.0 / dpiY;
+
         var dv = new DrawingVisual();
         using (var dc = dv.RenderOpen())
         {
+            // Author in pixel units: scale the whole DC so 1 unit == 1 device pixel at the source DPI.
+            dc.PushTransform(new ScaleTransform(dipW / cw, dipH / ch));
             dc.DrawImage(cropped, new Rect(0, 0, cw, ch));
-            Draw(dc, shapes, cropped);
+            Draw(dc, shapes, cropped, new Size(cw, ch));
+            dc.Pop();
         }
-        var rtb = new RenderTargetBitmap(cw, ch, 96, 96, PixelFormats.Pbgra32);
+        var rtb = new RenderTargetBitmap(cw, ch, dpiX, dpiY, PixelFormats.Pbgra32);
         rtb.Render(dv);
         rtb.Freeze();
         return rtb;
@@ -135,6 +167,82 @@ public class AnnotationRenderer
         }
         geo.Freeze();
         dc.DrawGeometry(null, Pen(p.Color, p.StrokeWidth), geo);
+    }
+
+    // Highlighter: a round-capped poly-line at a flat translucent alpha. WPF's DrawingContext has
+    // no multiply blend, so we approximate the marker look with translucent flat alpha — visually
+    // equivalent over light content and (unlike a ShaderEffect) it survives RenderTargetBitmap and
+    // the ffmpeg overlay-PNG path cleanly.
+    private void DrawHighlight(DrawingContext dc, HighlightShape h)
+    {
+        if (h.Points.Count < 2) return;
+        var geo = new StreamGeometry();
+        using (var ctx = geo.Open())
+        {
+            ctx.BeginFigure(new Point(h.Points[0].X, h.Points[0].Y), false, false);
+            for (int i = 1; i < h.Points.Count; i++)
+                ctx.LineTo(new Point(h.Points[i].X, h.Points[i].Y), true, true);
+        }
+        geo.Freeze();
+
+        var c = ParseColor(h.Color);
+        byte a = (byte)Math.Clamp(h.Opacity * 255, 0, 255);
+        var brush = new SolidColorBrush(Color.FromArgb(a, c.R, c.G, c.B));
+        brush.Freeze();
+        var pen = new Pen(brush, h.StrokeWidth)
+        {
+            StartLineCap = PenLineCap.Round,
+            EndLineCap = PenLineCap.Round,
+            LineJoin = PenLineJoin.Round
+        };
+        pen.Freeze();
+        dc.DrawGeometry(null, pen, geo);
+    }
+
+    // Spotlight: fill the whole canvas with the dim colour, punching the rect as an even-odd hole.
+    private void DrawSpotlight(DrawingContext dc, SpotlightShape s, Size canvas)
+    {
+        double cw = Math.Max(1, canvas.Width), ch = Math.Max(1, canvas.Height);
+        var grp = new GeometryGroup { FillRule = FillRule.EvenOdd };
+        grp.Children.Add(new RectangleGeometry(new Rect(0, 0, cw, ch)));
+        grp.Children.Add(new RectangleGeometry(new Rect(s.X, s.Y, Math.Max(0, s.W), Math.Max(0, s.H))));
+        grp.Freeze();
+        var brush = new SolidColorBrush(ParseColor(s.DimColor));
+        brush.Freeze();
+        dc.DrawGeometry(brush, null, grp);
+    }
+
+    // Crop the source to the rect, run the effect, and draw the result back. No-op without a source
+    // (e.g. the recording overlay PNG has no base image) — redaction is a still-image feature.
+    private static void DrawPixelEffect(DrawingContext dc, BitmapSource? source,
+        double x, double y, double w, double h, Func<BitmapSource, BitmapSource> effect)
+    {
+        if (source == null || w < 1 || h < 1) return;
+        int ix = (int)Math.Round(x), iy = (int)Math.Round(y);
+        int iw = (int)Math.Round(w), ih = (int)Math.Round(h);
+        ix = Math.Clamp(ix, 0, Math.Max(0, source.PixelWidth - 1));
+        iy = Math.Clamp(iy, 0, Math.Max(0, source.PixelHeight - 1));
+        if (ix + iw > source.PixelWidth) iw = source.PixelWidth - ix;
+        if (iy + ih > source.PixelHeight) ih = source.PixelHeight - iy;
+        if (iw < 1 || ih < 1) return;
+        var crop = new CroppedBitmap(source, new Int32Rect(ix, iy, iw, ih));
+        var done = effect(crop);
+        dc.DrawImage(done, new Rect(ix, iy, iw, ih));
+    }
+
+    // Fallback canvas size for a spotlight when no explicit size is supplied: the union of all
+    // shape bounds (so a spotlight at least dims around the other annotations).
+    private static Size UnionSize(IReadOnlyList<Shape> shapes)
+    {
+        double maxX = 1, maxY = 1;
+        foreach (var s in shapes)
+        {
+            var b = ShapeHit.Bounds(s);
+            if (b.IsEmpty) continue;
+            maxX = Math.Max(maxX, b.Right);
+            maxY = Math.Max(maxY, b.Bottom);
+        }
+        return new Size(maxX, maxY);
     }
 
     private void DrawText(DrawingContext dc, TextShape t)

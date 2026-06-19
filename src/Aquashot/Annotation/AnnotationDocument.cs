@@ -17,6 +17,29 @@ public class AnnotationDocument
         _redo.Clear();
     }
 
+    // Add several shapes as one batch (clears the redo stack once). Used by auto-redact.
+    public void AddRange(IEnumerable<Shape> shapes)
+    {
+        _shapes.AddRange(shapes);
+        _redo.Clear();
+    }
+
+    // Replace the entire shape list (used after a crop re-bases every shape's coordinates).
+    public void ReplaceAll(IEnumerable<Shape> shapes)
+    {
+        _shapes.Clear();
+        _shapes.AddRange(shapes);
+        _redo.Clear();
+    }
+
+    // Drop every shape of a given type (e.g. keep only one Spotlight). Returns how many removed.
+    public int RemoveAllOfType<T>() where T : Shape
+    {
+        int removed = _shapes.RemoveAll(s => s is T);
+        if (removed > 0) _redo.Clear();
+        return removed;
+    }
+
     public void Undo()
     {
         if (_shapes.Count == 0) return;
@@ -69,6 +92,10 @@ public class AnnotationDocument
         LineShape l => l with { X1 = l.X1 + dx, Y1 = l.Y1 + dy, X2 = l.X2 + dx, Y2 = l.Y2 + dy },
         ArrowShape a => a with { X1 = a.X1 + dx, Y1 = a.Y1 + dy, X2 = a.X2 + dx, Y2 = a.Y2 + dy },
         PenShape p => p with { Points = p.Points.Select(pt => (pt.X + dx, pt.Y + dy)).ToList() },
+        HighlightShape h => h with { Points = h.Points.Select(pt => (pt.X + dx, pt.Y + dy)).ToList() },
+        SpotlightShape sp => sp with { X = sp.X + dx, Y = sp.Y + dy },
+        BlurShape b => b with { X = b.X + dx, Y = b.Y + dy },
+        PixelateShape px => px with { X = px.X + dx, Y = px.Y + dy },
         TextShape t => t with { X = t.X + dx, Y = t.Y + dy },
         CounterShape c => c with { X = c.X + dx, Y = c.Y + dy },
         _ => s

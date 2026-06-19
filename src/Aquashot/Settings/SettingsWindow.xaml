@@ -21,7 +21,9 @@
 
         <TextBlock Text="FILENAME PATTERN" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}"/>
         <TextBox x:Name="PatternBox" Margin="0,4,0,4" TextChanged="Pattern_Changed"/>
-        <TextBlock x:Name="PreviewText" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="2,0,0,14"/>
+        <TextBlock x:Name="PreviewText" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="2,0,0,2"/>
+        <TextBlock Text="Tokens: {date-format} e.g. {yyyy-MM-dd}, {window} (foreground title), {app} (process name)."
+                   Foreground="{StaticResource B.TextDim}" FontSize="11" TextWrapping="Wrap" Margin="2,0,0,14"/>
 
         <TextBlock Text="IMAGE FORMAT" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}"/>
         <ComboBox x:Name="FormatBox" Width="120" HorizontalAlignment="Left" Margin="0,4,0,14"
@@ -89,6 +91,170 @@
             <ComboBoxItem Content="sierra2_4a"/>
             <ComboBoxItem Content="floyd_steinberg"/>
         </ComboBox>
+
+        <!-- AUDIO/RECORD region -->
+        <TextBlock Text="AUDIO &amp; COUNTDOWN" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}" Margin="0,0,0,4"/>
+
+        <CheckBox x:Name="RecordMicCheck" Content="Record microphone" Margin="0,0,0,6"/>
+        <CheckBox x:Name="RecordSystemCheck" Content="Record system audio (needs Stereo Mix / VB-Cable)" Margin="0,0,0,10"/>
+
+        <DockPanel Margin="0,0,0,10">
+            <Button x:Name="RefreshDevicesBtn" Content="Refresh" Style="{StaticResource GhostButton}"
+                    DockPanel.Dock="Right" Margin="8,0,0,0" Click="RefreshDevices_Click"
+                    ToolTip="Probe ffmpeg for audio devices"/>
+            <StackPanel>
+                <TextBlock Text="Microphone device" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+                <ComboBox x:Name="MicDeviceBox" IsEditable="True" Margin="0,0,0,8"/>
+                <TextBlock Text="System audio device" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+                <ComboBox x:Name="SystemDeviceBox" IsEditable="True"/>
+            </StackPanel>
+        </DockPanel>
+
+        <TextBlock Text="Audio bitrate (kbps)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="AudioBitrateBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Countdown before recording" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <ComboBox x:Name="CountdownBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10">
+            <ComboBoxItem Content="0"/>
+            <ComboBoxItem Content="3"/>
+            <ComboBoxItem Content="5"/>
+        </ComboBox>
+
+        <CheckBox x:Name="TrimAfterStopCheck" Content="Trim clip after stopping (in/out prompt)" Margin="0,0,0,18"/>
+
+        <!-- HUD/SCROLL region -->
+        <TextBlock Text="RECORDING HUD" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}" Margin="0,0,0,4"/>
+
+        <CheckBox x:Name="ShowClickHighlightCheck" Content="Highlight mouse clicks (ring) while recording" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Click ring colour (ARGB hex)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="ClickHighlightColorBox" Width="160" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Click ring radius (px)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="ClickHighlightRadiusBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <CheckBox x:Name="ShowKeystrokeHudCheck" Content="Show keystrokes (caption HUD) while recording" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Keystroke caption linger (seconds)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="KeystrokeHudSecondsBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,18"/>
+
+        <TextBlock Text="SCROLLING CAPTURE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}" Margin="0,0,0,4"/>
+
+        <TextBlock Text="Scrolling capture hotkey" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="ScrollingCaptureHotkeyBox" IsReadOnly="True" Width="200" HorizontalAlignment="Left" Margin="0,0,0,10"
+                 PreviewKeyDown="ScrollingHotkeyBox_PreviewKeyDown" ToolTip="Click and press a key combo (blank disables)"/>
+
+        <TextBlock Text="Scroll step per frame (px)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="ScrollStepBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Settle wait after scroll (ms)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="ScrollSettleBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Max frames (safety cap)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="ScrollMaxFramesBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,18"/>
+
+        <!-- HOTKEYS region -->
+        <TextBlock Text="GLOBAL HOTKEYS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}" Margin="0,0,0,4"/>
+        <TextBlock Text="Click a box and press a combo. Backspace/Delete clears (blank disables)."
+                   Foreground="{StaticResource B.TextDim}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+        <TextBlock Text="Repeat last region" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="RepeatRegionHotkeyBox" IsReadOnly="True" Width="200" HorizontalAlignment="Left" Margin="0,0,0,10"
+                 PreviewKeyDown="RepeatRegionHotkeyBox_PreviewKeyDown" ToolTip="Re-capture the last region instantly"/>
+
+        <TextBlock Text="Record region" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="RecordRegionHotkeyBox" IsReadOnly="True" Width="200" HorizontalAlignment="Left" Margin="0,0,0,10"
+                 PreviewKeyDown="RecordRegionHotkeyBox_PreviewKeyDown" ToolTip="Open region capture (then pick Record)"/>
+
+        <TextBlock Text="Capture window" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="CaptureWindowHotkeyBox" IsReadOnly="True" Width="200" HorizontalAlignment="Left" Margin="0,0,0,10"
+                 PreviewKeyDown="CaptureWindowHotkeyBox_PreviewKeyDown" ToolTip="Window-pick capture"/>
+
+        <TextBlock Text="Capture all monitors" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="CaptureFullScreenHotkeyBox" IsReadOnly="True" Width="200" HorizontalAlignment="Left" Margin="0,0,0,18"
+                 PreviewKeyDown="CaptureFullScreenHotkeyBox_PreviewKeyDown" ToolTip="Capture every monitor"/>
+
+        <!-- MAGNIFIER region -->
+        <TextBlock Text="MAGNIFIER LOUPE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}" Margin="0,0,0,4"/>
+        <CheckBox x:Name="MagnifierEnabledCheck" Content="Show a zoom loupe while picking a region" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Loupe zoom (×)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="MagnifierZoomBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Loupe size (px)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="MagnifierSizeBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,18"/>
+
+        <!-- ANNOTATION region -->
+        <TextBlock Text="ANNOTATION" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}" Margin="0,0,0,4"/>
+
+        <TextBlock Text="Highlighter width (px)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="HighlighterWidthBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Highlighter opacity (0-1)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="HighlighterOpacityBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Spotlight dim colour (ARGB hex)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="SpotlightDimBox" Width="160" HorizontalAlignment="Left" Margin="0,0,0,18"/>
+
+        <!-- REDACT/CROP region -->
+        <TextBlock Text="AUTO-REDACT (OCR)" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}" Margin="0,0,0,4"/>
+        <CheckBox x:Name="AutoRedactCheck" Content="Auto-redact detected text on capture" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Redact style" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <ComboBox x:Name="RedactStyleBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10">
+            <ComboBoxItem Content="Blur"/>
+            <ComboBoxItem Content="Pixelate"/>
+        </ComboBox>
+
+        <TextBlock Text="Blur radius" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="RedactBlurRadiusBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Pixelate block (px)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="RedactPixelateBlockBox" Width="120" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Redact patterns (';'-separated regex; blank = all lines)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <TextBox x:Name="RedactPatternsBox" Height="48" AcceptsReturn="True" TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto" Margin="0,0,0,18"/>
+
+        <!-- SHARE region -->
+        <TextBlock Text="UPLOAD &amp; SHARE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}" Margin="0,0,0,4"/>
+
+        <TextBlock Text="Provider" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <ComboBox x:Name="ShareProviderBox" Width="160" HorizontalAlignment="Left" Margin="0,0,0,10"
+                  SelectionChanged="ShareProvider_Changed">
+            <ComboBoxItem Content="None"/>
+            <ComboBoxItem Content="Imgur"/>
+            <ComboBoxItem Content="Custom"/>
+        </ComboBox>
+
+        <StackPanel x:Name="ImgurPanel">
+            <TextBlock Text="Imgur client id (anonymous upload)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+            <TextBox x:Name="ImgurClientIdBox" Margin="0,0,0,10"/>
+        </StackPanel>
+
+        <StackPanel x:Name="CustomPanel">
+            <TextBlock Text="Custom upload URL (multipart POST)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+            <TextBox x:Name="CustomUrlBox" Margin="0,0,0,10"/>
+
+            <TextBlock Text="Multipart field name" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+            <TextBox x:Name="CustomFieldBox" Width="160" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+            <TextBlock Text="Extra headers (one 'Key: Value' per line)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+            <TextBox x:Name="CustomHeadersBox" Height="48" AcceptsReturn="True" TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto" Margin="0,0,0,10"/>
+
+            <TextBlock Text="Response URL path (JSON e.g. $.data.link, or regex:&lt;pattern&gt;)" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+            <TextBox x:Name="CustomResponsePathBox" Margin="0,0,0,10"/>
+        </StackPanel>
+
+        <TextBlock Text="Copy link format" Foreground="{StaticResource B.TextDim}" FontSize="12" Margin="0,0,0,2"/>
+        <ComboBox x:Name="ShareCopyFormatBox" Width="160" HorizontalAlignment="Left" Margin="0,0,0,10">
+            <ComboBoxItem Content="Url"/>
+            <ComboBoxItem Content="Markdown"/>
+            <ComboBoxItem Content="Html"/>
+        </ComboBox>
+
+        <CheckBox x:Name="ShareAfterSaveCheck" Content="Auto-upload &amp; copy link after every save" Margin="0,0,0,18"/>
 
         <CheckBox x:Name="StartupCheck" Content="Run at Windows startup" Margin="0,0,0,10"/>
         <CheckBox x:Name="EnableOcrCheck" Content="Index screenshot text (OCR) for search" Margin="0,0,0,18"/>

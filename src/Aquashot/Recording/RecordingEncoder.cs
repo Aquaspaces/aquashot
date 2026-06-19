@@ -33,7 +33,7 @@ public class RecordingEncoder
 
     public async Task<RecordResult> ProduceAsync(string intermediate, string encoder,
         RecordFormats formats, TimeSpan duration, int sourceWidth, int fps, string outBase,
-        string? overlayPng = null, GifOptions? gif = null)
+        string? overlayPng = null, GifOptions? gif = null, bool includeAudio = false)
     {
         gif ??= GifOptions.Default;
         var files = new List<string>();
@@ -45,7 +45,7 @@ public class RecordingEncoder
             int kbps = SizeTargeter.BitrateKbps(duration, _videoBudget);
             // Unlimited budget -> no -fs hard cap; otherwise leave ~1 MB headroom under the budget.
             int? fsMb = _videoBudget >= long.MaxValue ? null : Math.Max(1, (int)(_videoBudget / (1024 * 1024)) - 1);
-            var r = await _runner.RunAsync(FFmpegArgs.Mp4Transcode(intermediate, encoder, kbps, mp4, overlayPng, fsMb));
+            var r = await _runner.RunAsync(FFmpegArgs.Mp4Transcode(intermediate, encoder, kbps, mp4, overlayPng, fsMb, includeAudio));
             if (!r.Ok) throw new InvalidOperationException("MP4 encode failed: " + r.StderrTail);
             files.Add(mp4);
         }

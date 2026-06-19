@@ -83,6 +83,24 @@
         <PathGeometry Figures="M22 12l-2.5-2.5M22 12l-2.5 2.5"/>
     </GeometryGroup>
     <PathGeometry x:Key="Icon.Droplet" Figures="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+    <GeometryGroup x:Key="Icon.Highlighter">
+        <PathGeometry Figures="M9 11l-4 4v3h3l4-4"/>
+        <PathGeometry Figures="M13 7l4 4-6 6-4-4z"/>
+        <PathGeometry Figures="M16 4l4 4-2.5 2.5-4-4z"/>
+    </GeometryGroup>
+    <GeometryGroup x:Key="Icon.Spotlight">
+        <RectangleGeometry Rect="3,3,18,18" RadiusX="2" RadiusY="2"/>
+        <RectangleGeometry Rect="8,8,8,8" RadiusX="1" RadiusY="1"/>
+    </GeometryGroup>
+    <GeometryGroup x:Key="Icon.Pause">
+        <RectangleGeometry Rect="6,5,4,14" RadiusX="1" RadiusY="1"/>
+        <RectangleGeometry Rect="14,5,4,14" RadiusX="1" RadiusY="1"/>
+    </GeometryGroup>
+    <PathGeometry x:Key="Icon.Play" Figures="M7 4v16l13-8z"/>
+    <GeometryGroup x:Key="Icon.Crop">
+        <PathGeometry Figures="M6 2v14a2 2 0 0 0 2 2h14"/>
+        <PathGeometry Figures="M18 22V8a2 2 0 0 0-2-2H2"/>
+    </GeometryGroup>
 
     <!-- ============ Tool toggle (RadioButton) ============ -->
     <Style x:Key="ToolToggle" TargetType="RadioButton">

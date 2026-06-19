@@ -20,6 +20,8 @@
             <RadioButton x:Name="ToolPen"     GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Pencil}"  ToolTip="Pen"/>
             <RadioButton x:Name="ToolText"    GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Text}"    ToolTip="Text"/>
             <RadioButton x:Name="ToolCounter" GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Counter}" ToolTip="Numbered step"/>
+            <RadioButton x:Name="ToolHighlight" GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Highlighter}" ToolTip="Highlighter (translucent marker)"/>
+            <RadioButton x:Name="ToolSpotlight" GroupName="tool" Style="{StaticResource ToolToggle}" Tag="{StaticResource Icon.Spotlight}" ToolTip="Spotlight (dim outside a rect)"/>
 
             <Border Width="1" Background="{StaticResource B.Border}" Margin="6,5"/>
 
@@ -38,6 +40,9 @@
 
             <Button x:Name="BtnUndo"    Style="{StaticResource IconButton}" Tag="{StaticResource Icon.Undo}"  ToolTip="Undo (Ctrl+Z)"/>
             <Button x:Name="BtnRedo"    Style="{StaticResource IconButton}" Tag="{StaticResource Icon.Redo}"  ToolTip="Redo (Ctrl+Y)"/>
+            <Button x:Name="BtnRedact"  Style="{StaticResource IconButton}" Tag="{StaticResource Icon.Droplet}" ToolTip="Auto-redact: blur/pixelate detected text (OCR)"/>
+            <ToggleButton x:Name="ToolCropBtn" Style="{StaticResource IconToggle}" Tag="{StaticResource Icon.Crop}"
+                          Visibility="Collapsed" ToolTip="Crop: drag a rect, then Enter/click to apply"/>
             <Button x:Name="BtnPin"     Style="{StaticResource IconButton}" Tag="{StaticResource Icon.Pin}"   ToolTip="Pin to screen (floating, always on top)"/>
 
             <Border Width="1" Background="{StaticResource B.Border}" Margin="6,5"/>
@@ -62,6 +67,8 @@
 
             <Border Width="1" Background="{StaticResource B.Border}" Margin="6,5"/>
 
+            <Button x:Name="BtnPause" Style="{StaticResource IconButton}" Tag="{StaticResource Icon.Pause}"
+                    Visibility="Collapsed" ToolTip="Pause / resume recording"/>
             <TextBlock x:Name="RecTimer" Text="00:00" Visibility="Collapsed" Margin="4,0,8,0"
                        VerticalAlignment="Center" FontFamily="Consolas" FontSize="14"
                        Foreground="{StaticResource B.Text}"/>

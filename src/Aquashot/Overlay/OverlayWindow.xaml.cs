@@ -26,6 +26,7 @@ using Color = System.Windows.Media.Color;
 using Cursor = System.Windows.Input.Cursor;
 using Cursors = System.Windows.Input.Cursors;
 using Size = System.Windows.Size;
+using Image = System.Windows.Controls.Image;
 
 namespace Aquashot.Overlay;
 
@@ -70,20 +71,34 @@ public partial class OverlayWindow : Window
     private (double x, double y) _moveStartVirtual;
     private PixelRect _moveOrigSel;
 
+    // MAGNIFIER: a circular zoom loupe shown near the cursor during region selection.
+    private Border? _loupe;
+    private Image? _loupeImage;
+    private TextBlock? _loupeReadout;
+
     public OverlayMode Mode { get; set; } = OverlayMode.Region;
 
     // Set by OverlayController before the window is shown; drives in-toolbar recording.
     public RecordingController? Recorder { get; set; }
 
+    // App settings (highlighter width/opacity, spotlight dim, auto-redact). Set by the controller.
+    public Aquashot.Settings.AppSettings Settings { get; set; } = new();
+
+    // OCR service for the auto-redact button (set by the controller); null disables redaction.
+    public Aquashot.History.IOcrService? Ocr { get; set; }
+
     // Default clipboard action for the confirm/Stop button (set by the controller from settings).
     // Per-capture shortcuts (Ctrl+S / Ctrl+D / Ctrl+C) override it.
     public Aquashot.Output.ClipboardMode DefaultClip { get; set; } = Aquashot.Output.ClipboardMode.Image;
     private bool _recording;
+    private CountdownWindow? _countdown;      // live pre-record countdown bubble (null when not counting)
     private GlobalEscHook? _escHook;          // catches Esc while the region is click-through
+    private Aquashot.Recording.InputHud.InputHudController? _hud; // click/keystroke HUD over the region
     private readonly System.Windows.Threading.DispatcherTimer _recTimer =
         new() { Interval = TimeSpan.FromSeconds(1) };
 
     public event Action<OverlayWindow>? RegionCommitted;
+    public event Action<PixelRect>? RegionCommittedRect; // LAST-REGION: the committed selection in virtual px
     public event Action<CapturedFrame, PixelRect, AnnotationDocument, ClipboardMode>? Confirmed;
     public event Action? PinRequested;
     public event Action? Cancelled;
@@ -131,6 +146,7 @@ public partial class OverlayWindow : Window
         _hoverWindow = null;
         _dragging = false;
         SelRect.Visibility = Visibility.Collapsed;
+        if (m != OverlayMode.Region) HideLoupe(); // loupe is a region-selection aid only
 
         if (m == OverlayMode.Monitor)
         {
@@ -166,8 +182,12 @@ public partial class OverlayWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _closed = true;
+        _countdown?.Cancel(); // abort any in-flight countdown so its awaiter unwinds cleanly
+        _countdown = null;
         _escHook?.Dispose(); // guard against double-dispose (StopRecordingAsync may have run first)
         _escHook = null;
+        _hud?.Dispose();     // safety net: ensure HUD hooks are gone if the window closes mid-record
+        _hud = null;
         base.OnClosed(e);
     }
 
@@ -231,6 +251,10 @@ public partial class OverlayWindow : Window
             else { _hoverWindow = null; WinRect.Visibility = Visibility.Collapsed; DimLabel.Visibility = Visibility.Collapsed; }
             return;
         }
+        // MAGNIFIER: while picking a region, track a zoom loupe under the cursor (before the
+        // drag-rect branch returns) so it shows both before and during the drag.
+        if (Mode == OverlayMode.Region) UpdateLoupe(e.GetPosition(Overlay));
+
         if (!_dragging) return;
         var p = e.GetPosition(Overlay);
         double x = Math.Min(_start.X, p.X), y = Math.Min(_start.Y, p.Y);
@@ -258,6 +282,8 @@ public partial class OverlayWindow : Window
     {
         if (e.Key == Key.Escape)
         {
+            // Esc during the pre-record countdown aborts it (its awaiter then cancels the capture).
+            if (_countdown != null) { _countdown.Cancel(); return; }
             // Esc stops & finalizes a recording (Stop & save) with the default clipboard action.
             if (_recording) { _ = StopRecordingAsync(RecordingClip(DefaultClip)); return; }
             RaiseCancelled();
@@ -309,7 +335,8 @@ public partial class OverlayWindow : Window
         SelRect.Visibility = Visibility.Collapsed;
         WinRect.Visibility = Visibility.Collapsed;
         ModeBar.Visibility = Visibility.Collapsed; // mode is fixed once a region is committed
-        if (!_closed) RegionCommitted?.Invoke(this);
+        HideLoupe(); // selection done; the loupe is a selection-only aid
+        if (!_closed) { RegionCommitted?.Invoke(this); RegionCommittedRect?.Invoke(_selVirtual); }
 
         _doc = new AnnotationDocument();
         _layer = new AnnotationLayer { Doc = _doc, IsHitTestVisible = false };
@@ -377,6 +404,8 @@ public partial class OverlayWindow : Window
         _toolbar.ColorSampleRequested += () => { _colorCopyMode = true; Cursor = Cursors.Cross; };
         _toolbar.DelayedCaptureRequested += secs => DelayedCaptureRequested?.Invoke(_selVirtual, secs);
         _toolbar.FreezeToggleRequested += OnFreezeToggle;
+        _toolbar.RedactRequested += OnRedact;
+        _toolbar.PauseToggleRequested += OnPauseToggle; // PAUSE
         Overlay.Children.Add(_toolbar);
 
         ApplySelection(_selVirtual, translateShapes: false, oldSel: _selVirtual);
@@ -571,6 +600,7 @@ public partial class OverlayWindow : Window
                 if (!string.IsNullOrEmpty(text)) { _doc!.Add(new TextShape(cx, cy, text!, color, w)); _layer!.Refresh(); }
                 return;
             case ToolKind.Pen:
+            case ToolKind.Highlighter:
                 _penPoints = new List<(double, double)> { (cx, cy) };
                 _dragging = true;
                 Overlay.CaptureMouse();
@@ -597,7 +627,7 @@ public partial class OverlayWindow : Window
         }
         if (!_dragging) return;
         _lastAnnotateDip = e.GetPosition(Overlay);
-        if (_toolbar!.CurrentTool == ToolKind.Pen && _penPoints != null)
+        if (IsFreehand(_toolbar!.CurrentTool) && _penPoints != null)
         {
             var (px, py) = ToCrop(_lastAnnotateDip);
             _penPoints.Add((px, py));
@@ -617,10 +647,14 @@ public partial class OverlayWindow : Window
         double w = _toolbar.CurrentWidth;
         bool fill = _toolbar.CurrentFill;
 
-        if (_toolbar.CurrentTool == ToolKind.Pen && _penPoints != null)
+        if (_penPoints != null)
         {
-            _layer!.Preview = new PenShape(_penPoints.ToArray(), color, w);
-            _layer.Refresh();
+            if (_toolbar.CurrentTool == ToolKind.Highlighter)
+                _layer!.Preview = new HighlightShape(_penPoints.ToArray(), color,
+                    Settings.HighlighterWidth, Settings.HighlighterOpacity);
+            else if (_toolbar.CurrentTool == ToolKind.Pen)
+                _layer!.Preview = new PenShape(_penPoints.ToArray(), color, w);
+            _layer!.Refresh();
             return;
         }
 
@@ -630,10 +664,14 @@ public partial class OverlayWindow : Window
             ToolKind.Ellipse => MakeEllipse(sx, sy, cx, cy, color, w, fill),
             ToolKind.Line => new LineShape(sx, sy, cx, cy, color, w),
             ToolKind.Arrow => new ArrowShape(sx, sy, cx, cy, color, w),
+            ToolKind.Spotlight => new SpotlightShape(Math.Min(sx, cx), Math.Min(sy, cy),
+                Math.Abs(cx - sx), Math.Abs(cy - sy), Settings.SpotlightDimColor),
             _ => null
         };
         _layer.Refresh();
     }
+
+    private static bool IsFreehand(ToolKind t) => t is ToolKind.Pen or ToolKind.Highlighter;
 
     private void OnMouseWheel(object sender, MouseWheelEventArgs e)
     {
@@ -659,6 +697,14 @@ public partial class OverlayWindow : Window
         _layer.Preview = null;
         if (_toolbar!.CurrentTool == ToolKind.Pen && _penPoints != null && _penPoints.Count > 1)
             _doc!.Add(new PenShape(_penPoints.ToArray(), _toolbar.CurrentColor, _toolbar.CurrentWidth));
+        else if (_toolbar.CurrentTool == ToolKind.Highlighter && _penPoints != null && _penPoints.Count > 1)
+            _doc!.Add(new HighlightShape(_penPoints.ToArray(), _toolbar.CurrentColor,
+                Settings.HighlighterWidth, Settings.HighlighterOpacity));
+        else if (preview is SpotlightShape sp)
+        {
+            _doc!.RemoveAllOfType<SpotlightShape>(); // only one spotlight is meaningful
+            _doc.Add(sp);
+        }
         else if (preview != null)
             _doc!.Add(preview);
         _penPoints = null;
@@ -740,6 +786,19 @@ public partial class OverlayWindow : Window
         ClearSelection();
         _layer!.Refresh();
 
+        // COUNTDOWN: count down over the (now live) region before ffmpeg starts. The bubble is a
+        // separate topmost window that closes before capture, so the digits aren't recorded. Esc
+        // during the countdown cancels the whole recording (OnKeyDown calls _countdown.Cancel()).
+        if (Settings.RecordCountdownSeconds > 0)
+        {
+            double cx = _selVirtual.X + _selVirtual.Width / 2;
+            double cy = _selVirtual.Y + _selVirtual.Height / 2;
+            _countdown = new CountdownWindow(Settings.RecordCountdownSeconds, cx, cy, _sc);
+            bool finished = await _countdown.RunAsync();
+            _countdown = null;
+            if (!finished || _closed) { if (!_closed) RaiseCancelled(); return; }
+        }
+
         var err = await Recorder.StartAsync(_selVirtual, fmt, annPng);
         if (err != null) { if (!_closed) Close(); return; } // recorder surfaces the error via Finished
 
@@ -761,6 +820,15 @@ public partial class OverlayWindow : Window
         // A low-level hook keeps Esc working (Esc during recording = Stop & save, like the button).
         _escHook = new GlobalEscHook(() =>
             Dispatcher.BeginInvoke(new Action(() => { if (_recording) OnPrimary(); })));
+
+        // HUD-HOOK: paint cursor-click rings + keystroke captions into the (now live) region so
+        // gdigrab records them. Gated behind the ShowClickHighlight/ShowKeystrokeHud settings;
+        // disposed on every stop/close path (StopRecordingAsync + OnClosed) so the hooks never leak.
+        if (Aquashot.Recording.InputHud.InputHudController.Wanted(Settings))
+        {
+            _hud = new Aquashot.Recording.InputHud.InputHudController();
+            _hud.Start(_selVirtual, _sc, Settings);
+        }
 
         _toolbar.SetPrimary("Stop", "#E03B3B");
         _toolbar.ShowTimer(true);
@@ -800,8 +868,18 @@ public partial class OverlayWindow : Window
 
     private void OnRecTick(object? sender, EventArgs e)
     {
-        var t = Recorder!.Elapsed;
+        var t = Recorder!.Elapsed; // recorded (un-paused) time
         _toolbar!.SetTimer($"{(int)t.TotalMinutes:00}:{t.Seconds:00}");
+    }
+
+    // PAUSE: gdigrab keeps running; the controller tracks the paused span (dropped at encode) and
+    // reports recorded time. Swap the glyph; keep the elapsed clock frozen while paused.
+    private void OnPauseToggle()
+    {
+        if (!_recording || Recorder == null) return;
+        bool paused = Recorder.PauseToggle();
+        _toolbar!.SetPaused(paused);
+        if (paused) _recTimer.Stop(); else _recTimer.Start();
     }
 
     private async Task StopRecordingAsync(ClipboardMode clip)
@@ -811,12 +889,25 @@ public partial class OverlayWindow : Window
         _recording = false;
         _escHook?.Dispose();
         _escHook = null;
+        _hud?.Dispose(); // tear down click/keystroke HUD + its low-level hooks
+        _hud = null;
 
         if (Recorder != null)
         {
-            // Stop the live capture (fast), then kick off the slow encode in the background and
-            // close immediately so Stop feels instant — the encode finishes off-screen.
+            // Stop the live capture (fast) so the intermediate file is finalized.
             await Recorder.StopCaptureAsync();
+
+            // TRIM-AFTER-STOP: optionally prompt for an in/out range before the (background) encode.
+            // The dialog scrubs the RECORDED timeline; SetTrim maps it back onto the kept spans so
+            // paused gaps stay dropped. Cancelling the dialog keeps the full (pause-trimmed) clip.
+            if (Settings.TrimAfterStop && Recorder.RecordedDuration.TotalSeconds > 0.2)
+            {
+                var trim = new TrimWindow(Recorder.RecordedDuration);
+                if (trim.ShowDialog() == true && trim.Trimmed is { } range)
+                    Recorder.SetTrim(range.Start, range.End);
+            }
+
+            // Kick off the slow encode in the background and close immediately so Stop feels instant.
             _ = Recorder.EncodeAndFinishAsync(clip); // fire & forget — do NOT await the encode
         }
         if (!_closed) Close();
@@ -841,6 +932,33 @@ public partial class OverlayWindow : Window
     private void RaiseCancelled()
     {
         if (!_closed) Cancelled?.Invoke();
+    }
+
+    // Auto-redact: OCR the current crop, then blur/pixelate every (matching) detected text line.
+    // OCR runs off a temp PNG of the crop, so boxes come back in crop-local pixel space already.
+    private async void OnRedact()
+    {
+        if (_closed || _doc == null || Ocr == null || _layer?.Source == null) return;
+        var crop = _layer.Source;
+        string? temp = null;
+        try
+        {
+            temp = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                "aqua-ocr-" + Guid.NewGuid().ToString("N") + ".png");
+            var enc = new PngBitmapEncoder();
+            enc.Frames.Add(BitmapFrame.Create(crop));
+            using (var fs = System.IO.File.Create(temp)) enc.Save(fs);
+
+            var lines = await Ocr.RecognizeLinesAsync(temp);
+            if (_closed || _doc == null) return;
+            var chosen = Aquashot.Redaction.AutoRedactor.SelectLines(lines, Settings.RedactPatterns);
+            var shapes = Aquashot.Redaction.AutoRedactor.BuildShapes(chosen, 0, 0,
+                Settings.RedactStyle, Settings.RedactBlurRadius, Settings.RedactPixelateBlock);
+            if (shapes.Count > 0) { _doc.AddRange(shapes); _layer?.Refresh(); }
+            else FlashDim("No text to redact", new Point(20, 20));
+        }
+        catch { /* OCR/redaction is best-effort; never break the capture flow */ }
+        finally { if (temp != null) try { System.IO.File.Delete(temp); } catch { } }
     }
 
     // ---- Capture-mode toolbar actions (colour copy / freeze toggle) ----
@@ -913,6 +1031,104 @@ public partial class OverlayWindow : Window
         }
         _flashTimer.Tick += Hide;
         _flashTimer.Start();
+    }
+
+    // MAGNIFIER: build (once) and position the circular loupe near the cursor, sampling the
+    // frozen frame around the pointer pixel and blowing it up by MagnifierZoom. Off when the
+    // setting is disabled. The loupe is a selection-only aid; HideLoupe runs on commit/close.
+    private void UpdateLoupe(Point dip)
+    {
+        if (!Settings.MagnifierEnabled || _phase != Phase.Selecting) { HideLoupe(); return; }
+
+        int loupePx = Math.Max(40, Settings.MagnifierSizePx);
+        double zoom = Settings.MagnifierZoom > 0 ? Settings.MagnifierZoom : 2.0;
+        var bmp = _frame.Bitmap;
+        var (px, py) = Aquashot.ColorPicker.FrameSampler.PointToPixel(
+            _sc, dip.X, dip.Y, bmp.PixelWidth, bmp.PixelHeight);
+        var src = MagnifierLoupe.SourceRect(px, py, bmp.PixelWidth, bmp.PixelHeight, loupePx, zoom);
+
+        if (_loupe == null) BuildLoupe(loupePx);
+
+        var crop = new CroppedBitmap(bmp, src);
+        _loupeImage!.Source = crop;             // scaled up to fill the loupe by the Image's Stretch=Fill
+        _loupeImage.Width = loupePx;
+        _loupeImage.Height = loupePx;
+
+        var (vx, vy) = DipToVirtual(dip);
+        _loupeReadout!.Text = $"{(int)vx},{(int)vy}  {SampleColorHex(dip)}";
+
+        // Offset the loupe down-right of the cursor; flip to the other side near the screen edges.
+        double winWDip = _frame.Monitor.Bounds.Width / _sc;
+        double winHDip = _frame.Monitor.Bounds.Height / _sc;
+        double size = loupePx + 4; // border thickness padding
+        double lx = dip.X + 24, ly = dip.Y + 24;
+        if (lx + size > winWDip) lx = dip.X - size - 24;
+        if (ly + size + 18 > winHDip) ly = dip.Y - size - 18 - 24;
+        Canvas.SetLeft(_loupe, Math.Max(0, lx));
+        Canvas.SetTop(_loupe, Math.Max(0, ly));
+        _loupe!.Visibility = Visibility.Visible;
+    }
+
+    // Construct the loupe chrome once: a circular clipped image + crosshair + a readout chip.
+    private void BuildLoupe(int loupePx)
+    {
+        _loupeImage = new Image
+        {
+            Stretch = Stretch.Fill,
+            Width = loupePx,
+            Height = loupePx,
+            Clip = new EllipseGeometry(new Point(loupePx / 2.0, loupePx / 2.0), loupePx / 2.0, loupePx / 2.0)
+        };
+        RenderOptions.SetBitmapScalingMode(_loupeImage, BitmapScalingMode.NearestNeighbor);
+
+        var accent = new SolidColorBrush(Color.FromRgb(0x4D, 0xA3, 0xFF));
+        accent.Freeze();
+        var ring = new System.Windows.Shapes.Ellipse
+        {
+            Width = loupePx,
+            Height = loupePx,
+            Stroke = accent,
+            StrokeThickness = 2,
+            IsHitTestVisible = false
+        };
+        double mid = loupePx / 2.0;
+        var crossH = new System.Windows.Shapes.Line
+        { X1 = mid - 8, Y1 = mid, X2 = mid + 8, Y2 = mid, Stroke = Brushes.White, StrokeThickness = 1, IsHitTestVisible = false };
+        var crossV = new System.Windows.Shapes.Line
+        { X1 = mid, Y1 = mid - 8, X2 = mid, Y2 = mid + 8, Stroke = Brushes.White, StrokeThickness = 1, IsHitTestVisible = false };
+
+        _loupeReadout = new TextBlock
+        {
+            Foreground = Brushes.White,
+            FontSize = 11,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            Margin = new Thickness(0, 2, 0, 0)
+        };
+
+        var stack = new StackPanel { IsHitTestVisible = false };
+        var imgHost = new Grid { Width = loupePx, Height = loupePx };
+        imgHost.Children.Add(_loupeImage);
+        imgHost.Children.Add(ring);
+        imgHost.Children.Add(crossH);
+        imgHost.Children.Add(crossV);
+        stack.Children.Add(imgHost);
+        stack.Children.Add(_loupeReadout);
+
+        _loupe = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0xCC, 0x1C, 0x1C, 0x22)),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(2),
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
+            Child = stack
+        };
+        Overlay.Children.Add(_loupe);
+    }
+
+    private void HideLoupe()
+    {
+        if (_loupe != null) _loupe.Visibility = Visibility.Collapsed;
     }
 
     // Sample the frozen frame's colour at a point in this window's coordinates (DIP) and

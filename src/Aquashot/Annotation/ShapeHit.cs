@@ -14,6 +14,10 @@ public static class ShapeHit
         LineShape l => DistSeg(x, y, l.X1, l.Y1, l.X2, l.Y2) <= Tol(l.StrokeWidth),
         ArrowShape a => DistSeg(x, y, a.X1, a.Y1, a.X2, a.Y2) <= Tol(a.StrokeWidth),
         PenShape p => PenHit(p, x, y),
+        HighlightShape h => HighlightHit(h, x, y),
+        SpotlightShape sp => SpotlightEdgeHit(sp, x, y),
+        BlurShape b => Inside(BBox(b.X, b.Y, b.W, b.H), x, y, 3),
+        PixelateShape px => Inside(BBox(px.X, px.Y, px.W, px.H), x, y, 3),
         TextShape t => TextBox(t).Contains(x, y),
         CounterShape c => Dist(x, y, c.X, c.Y) <= CounterR(c) + 3,
         _ => false
@@ -26,6 +30,10 @@ public static class ShapeHit
         LineShape l => Pad(SegBox(l.X1, l.Y1, l.X2, l.Y2)),
         ArrowShape a => Pad(SegBox(a.X1, a.Y1, a.X2, a.Y2)),
         PenShape p => Pad(PenBox(p)),
+        HighlightShape h => Pad(HighlightBox(h)),
+        SpotlightShape sp => Pad(BBox(sp.X, sp.Y, sp.W, sp.H)),
+        BlurShape b => Pad(BBox(b.X, b.Y, b.W, b.H)),
+        PixelateShape px => Pad(BBox(px.X, px.Y, px.W, px.H)),
         TextShape t => Pad(TextBox(t)),
         CounterShape c => Pad(new Rect(c.X - CounterR(c), c.Y - CounterR(c), 2 * CounterR(c), 2 * CounterR(c))),
         _ => Rect.Empty
@@ -84,6 +92,40 @@ public static class ShapeHit
             maxx = Math.Max(maxx, pt.X); maxy = Math.Max(maxy, pt.Y);
         }
         return new Rect(minx, miny, maxx - minx, maxy - miny);
+    }
+
+    // Highlighter hit/bounds mirror the pen (poly-line), but with the wider highlighter stroke.
+    private static bool HighlightHit(HighlightShape h, double x, double y)
+    {
+        var pts = h.Points;
+        double tol = Tol(h.StrokeWidth);
+        for (int i = 1; i < pts.Count; i++)
+            if (DistSeg(x, y, pts[i - 1].X, pts[i - 1].Y, pts[i].X, pts[i].Y) <= tol) return true;
+        return pts.Count == 1 && Dist(x, y, pts[0].X, pts[0].Y) <= tol;
+    }
+
+    private static Rect HighlightBox(HighlightShape h)
+    {
+        if (h.Points.Count == 0) return Rect.Empty;
+        double minx = double.MaxValue, miny = double.MaxValue, maxx = double.MinValue, maxy = double.MinValue;
+        foreach (var pt in h.Points)
+        {
+            minx = Math.Min(minx, pt.X); miny = Math.Min(miny, pt.Y);
+            maxx = Math.Max(maxx, pt.X); maxy = Math.Max(maxy, pt.Y);
+        }
+        return new Rect(minx, miny, maxx - minx, maxy - miny);
+    }
+
+    // A spotlight is selectable only near its rect EDGE (a band), so clicking inside the lit area
+    // doesn't grab it and steal every click within the region.
+    private static bool SpotlightEdgeHit(SpotlightShape s, double x, double y)
+    {
+        const double band = 8;
+        var outer = BBox(s.X, s.Y, s.W, s.H); outer.Inflate(band, band);
+        if (!outer.Contains(x, y)) return false;
+        var inner = BBox(s.X, s.Y, s.W, s.H);
+        inner.Inflate(-band, -band);
+        return inner.IsEmpty || !inner.Contains(x, y);
     }
 
     private static Rect TextBox(TextShape t)

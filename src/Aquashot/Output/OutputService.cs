@@ -27,19 +27,20 @@ public class OutputService
     }
 
     public string Save(CapturedFrame frame, PixelRect cropVirtual, AnnotationDocument doc,
-        AppSettings settings, DateTime now, ClipboardMode clip = ClipboardMode.Image)
+        AppSettings settings, DateTime now, ClipboardMode clip = ClipboardMode.Image,
+        string? windowTitle = null, string? appName = null)
     {
-        return SaveComposite(Compose(frame, cropVirtual, doc), settings, now, clip);
+        return SaveComposite(Compose(frame, cropVirtual, doc), settings, now, clip, windowTitle, appName);
     }
 
     public string SaveComposite(BitmapSource image, AppSettings settings, DateTime now,
-        ClipboardMode clip = ClipboardMode.Image)
+        ClipboardMode clip = ClipboardMode.Image, string? windowTitle = null, string? appName = null)
     {
         if (image.CanFreeze && !image.IsFrozen) image.Freeze();
 
         Directory.CreateDirectory(settings.SaveFolder);
         string file = Path.Combine(settings.SaveFolder,
-            FilenameGenerator.Generate(settings.FilenamePattern, settings.ImageFormat, now));
+            FilenameGenerator.Generate(settings.FilenamePattern, settings.ImageFormat, now, windowTitle, appName));
         File.WriteAllBytes(file, Encode(image, settings.ImageFormat));
 
         // Apply the clipboard action after the file is written so Path mode can copy the path.

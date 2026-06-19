@@ -5,6 +5,7 @@ using System.Windows.Media.Imaging;
 using Aquashot.Annotation;
 using Pen = System.Windows.Media.Pen;
 using Color = System.Windows.Media.Color;
+using Size = System.Windows.Size;
 
 namespace Aquashot.Editor;
 
@@ -25,7 +26,11 @@ public class AnnotationLayer : FrameworkElement
         var list = new List<Shape>();
         if (Doc != null) list.AddRange(Doc.Shapes);
         if (Preview != null) list.Add(Preview);
-        _renderer.Draw(dc, list, Source);
+        // Pass the layer's pixel size so a Spotlight dims the whole crop, not just shape bounds.
+        var canvas = new Size(
+            double.IsNaN(Width) || Width <= 0 ? ActualWidth : Width,
+            double.IsNaN(Height) || Height <= 0 ? ActualHeight : Height);
+        _renderer.Draw(dc, list, Source, canvas);
 
         if (SelectionBox is Rect box && !box.IsEmpty)
         {

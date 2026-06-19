@@ -22,3 +22,18 @@ public record TextShape(double X, double Y, string Text, string Color, double St
 
 public record CounterShape(double X, double Y, int Number, string Color, double StrokeWidth)
     : Shape(Color, StrokeWidth);
+
+// Translucent marker stroke (highlighter). Opacity 0..1; Color is an opaque hex, alpha applied at draw.
+public record HighlightShape(IReadOnlyList<(double X, double Y)> Points, string Color, double StrokeWidth, double Opacity)
+    : Shape(Color, StrokeWidth);
+
+// Dims everything OUTSIDE the rect; DimColor is ARGB hex. Drawn last (over all other shapes).
+public record SpotlightShape(double X, double Y, double W, double H, string DimColor)
+    : Shape(DimColor, 0);
+
+// Pixel-effect shapes: blur or pixelate the underlying image inside the rect. Need the source bitmap.
+public record BlurShape(double X, double Y, double W, double H, double Radius)
+    : Shape("#00000000", 0);
+
+public record PixelateShape(double X, double Y, double W, double H, int Block)
+    : Shape("#00000000", 0);

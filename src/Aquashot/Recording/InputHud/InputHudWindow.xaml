@@ -1,0 +1,17 @@
+<Window x:Class="Aquashot.Recording.InputHud.InputHudWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True"
+        Background="Transparent" Topmost="True" ShowInTaskbar="False"
+        WindowStartupLocation="Manual" Focusable="False" IsHitTestVisible="False"
+        ShowActivated="False"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
+    <!-- Two layers over the recorded region: click rings on the canvas, keystroke chips bottom-centre.
+         The window is click-through (extended styles set in code-behind) so it never steals input. -->
+    <Grid>
+        <Canvas x:Name="RingCanvas" IsHitTestVisible="False"/>
+        <StackPanel x:Name="KeysPanel" Orientation="Horizontal"
+                    HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                    Margin="0,0,0,24" IsHitTestVisible="False"/>
+    </Grid>
+</Window>

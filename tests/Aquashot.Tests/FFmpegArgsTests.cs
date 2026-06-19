@@ -132,4 +132,164 @@ public class FFmpegArgsTests
         s.Should().Contain("-c:v h264_nvenc");
         s.Should().Contain("-f null");
     }
+
+    [Fact]
+    public void Gdigrab_without_audio_matches_silent_overload()
+    {
+        var region = new PixelRect(0, 0, 320, 240);
+        var silent = FFmpegArgs.CaptureGdigrab(region, 30, "libx264", "o.mp4");
+        var none = FFmpegArgs.CaptureGdigrab(region, 30, "libx264", "o.mp4", AudioSpec.None);
+        none.Should().Equal(silent);
+        Join(none).Should().NotContain("dshow");
+        Join(none).Should().NotContain("-c:a");
+    }
+
+    [Fact]
+    public void Gdigrab_with_mic_adds_dshow_input_and_aac_map()
+    {
+        var audio = new AudioSpec(true, "Microphone (Realtek)", false, null, 160);
+        var args = FFmpegArgs.CaptureGdigrab(new PixelRect(0, 0, 640, 480), 30, "libx264", "o.mp4", audio);
+        var s = Join(args);
+        s.Should().Contain("-f dshow");
+        s.Should().Contain("-i audio=Microphone (Realtek)");
+        s.Should().Contain("-c:a aac");
+        s.Should().Contain("-b:a 160k");
+        s.Should().Contain("-map 0:v");
+        s.Should().Contain("-map 1:a");
+        s.Should().NotContain("amix");
+    }
+
+    [Fact]
+    public void Gdigrab_with_two_sources_amixes_into_one_track()
+    {
+        var audio = new AudioSpec(true, "Mic", true, "Stereo Mix", 192);
+        var args = FFmpegArgs.CaptureGdigrab(new PixelRect(0, 0, 640, 480), 30, "libx264", "o.mp4", audio);
+        var s = Join(args);
+        s.Should().Contain("-i audio=Mic");
+        s.Should().Contain("-i audio=Stereo Mix");
+        s.Should().Contain("amix=inputs=2:duration=longest[aout]");
+        s.Should().Contain("-map [aout]");
+        s.Should().Contain("-b:a 192k");
+    }
+
+    [Fact]
+    public void Gdigrab_skips_audio_slots_with_blank_device_names()
+    {
+        // Mic enabled but no device name, system enabled with a device -> single audio input.
+        var audio = new AudioSpec(true, null, true, "CABLE Output", 128);
+        var s = Join(FFmpegArgs.CaptureGdigrab(new PixelRect(0, 0, 320, 240), 30, "libx264", "o.mp4", audio));
+        s.Should().Contain("-i audio=CABLE Output");
+        s.Should().Contain("-map 1:a");
+        s.Should().NotContain("amix");
+    }
+
+    [Fact]
+    public void AudioSpec_Any_reflects_resolvable_devices()
+    {
+        AudioSpec.None.Any.Should().BeFalse();
+        new AudioSpec(true, null, false, null).Any.Should().BeFalse();        // enabled but no device
+        new AudioSpec(true, "Mic", false, null).Any.Should().BeTrue();
+        new AudioSpec(false, null, true, "Stereo Mix").Any.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ListDshowDevices_requests_the_device_list()
+    {
+        var s = Join(FFmpegArgs.ListDshowDevices());
+        s.Should().Contain("-list_devices true");
+        s.Should().Contain("-f dshow");
+        s.Should().Contain("-i dummy");
+    }
+
+    [Fact]
+    public void Mp4_transcode_includeAudio_maps_and_encodes_aac()
+    {
+        var args = FFmpegArgs.Mp4Transcode("mid.mp4", "libx264", 4000, "out.mp4", includeAudio: true);
+        var s = Join(args);
+        s.Should().Contain("-map 0:a?");
+        s.Should().Contain("-c:a aac");
+    }
+
+    [Fact]
+    public void Mp4_transcode_default_drops_audio()
+    {
+        var s = Join(FFmpegArgs.Mp4Transcode("mid.mp4", "libx264", 4000, "out.mp4"));
+        s.Should().NotContain("-c:a");
+        s.Should().NotContain("0:a?");
+    }
+
+    [Fact]
+    public void Mp4_transcode_with_overlay_and_audio_maps_video_label_and_audio()
+    {
+        var s = Join(FFmpegArgs.Mp4Transcode("mid.mp4", "libx264", 4000, "out.mp4", "ann.png", 49, includeAudio: true));
+        s.Should().Contain("overlay=0:0,format=yuv420p[outv]");
+        s.Should().Contain("-map [outv]");
+        s.Should().Contain("-map 0:a?");
+        s.Should().Contain("-c:a aac");
+    }
+
+    // ---- Pause-drop (concat-kept) + trim ----
+
+    [Fact]
+    public void BuildKeepFilter_for_two_spans_trims_setpts_and_concats_video_only()
+    {
+        var f = FFmpegArgs.BuildKeepFilter(new[] { (0.0, 5.0), (8.0, 12.0) });
+        f.Should().Contain("[0:v]trim=start=0:end=5,setpts=PTS-STARTPTS[v0]");
+        f.Should().Contain("[0:v]trim=start=8:end=12,setpts=PTS-STARTPTS[v1]");
+        f.Should().Contain("[v0][v1]concat=n=2:v=1:a=0[outv]");
+        f.Should().NotContain("atrim");
+    }
+
+    [Fact]
+    public void BuildKeepFilter_with_audio_interleaves_video_and_audio_labels()
+    {
+        var f = FFmpegArgs.BuildKeepFilter(new[] { (0.0, 5.0), (8.0, 12.0) }, includeAudio: true);
+        f.Should().Contain("[0:a]atrim=start=0:end=5,asetpts=PTS-STARTPTS[a0]");
+        f.Should().Contain("[v0][a0][v1][a1]concat=n=2:v=1:a=1[outv][outa]");
+    }
+
+    [Fact]
+    public void Mp4ConcatKept_emits_filter_complex_and_maps_video()
+    {
+        var args = FFmpegArgs.Mp4ConcatKept("mid.mp4", "libx264", 4000, "out.mp4",
+            new[] { (0.0, 5.0), (8.0, 12.0) });
+        var s = Join(args);
+        s.Should().Contain("-filter_complex");
+        s.Should().Contain("trim=start=0:end=5");
+        s.Should().Contain("setpts=PTS-STARTPTS");
+        s.Should().Contain("concat=n=2");
+        s.Should().Contain("-map [outv]");
+        s.Should().Contain("-c:v libx264");
+        args[^1].Should().Be("out.mp4");
+    }
+
+    [Fact]
+    public void Mp4ConcatKept_with_overlay_overlays_after_concat()
+    {
+        var s = Join(FFmpegArgs.Mp4ConcatKept("mid.mp4", "libx264", 4000, "out.mp4",
+            new[] { (0.0, 5.0) }, overlayPng: "ann.png"));
+        s.Should().Contain("-i ann.png");
+        s.Should().Contain("[outv][1:v]overlay=0:0,format=yuv420p[finalv]");
+        s.Should().Contain("-map [finalv]");
+    }
+
+    [Fact]
+    public void Mp4ConcatKept_with_audio_maps_audio_track()
+    {
+        var s = Join(FFmpegArgs.Mp4ConcatKept("mid.mp4", "libx264", 4000, "out.mp4",
+            new[] { (0.0, 5.0) }, includeAudio: true));
+        s.Should().Contain("[outa]");
+        s.Should().Contain("-map [outa]");
+        s.Should().Contain("-c:a aac");
+    }
+
+    [Fact]
+    public void Mp4Trim_is_a_single_span_concat()
+    {
+        var args = FFmpegArgs.Mp4Trim("mid.mp4", "libx264", 4000, "out.mp4", 2.5, 7.5);
+        var s = Join(args);
+        s.Should().Contain("trim=start=2.5:end=7.5");
+        s.Should().Contain("concat=n=1:v=1:a=0[outv]");
+        s.Should().Contain("-map [outv]");
+    }
 }

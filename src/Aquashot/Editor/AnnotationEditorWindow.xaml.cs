@@ -13,6 +13,7 @@ using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using Cursor = System.Windows.Input.Cursor;
 using Cursors = System.Windows.Input.Cursors;
 using Size = System.Windows.Size;
+using Color = System.Windows.Media.Color;
 
 namespace Aquashot.Editor;
 
@@ -20,11 +21,19 @@ namespace Aquashot.Editor;
 // view, and hands the flattened (image + annotations) bitmap back to the caller. Saves nothing itself.
 public partial class AnnotationEditorWindow : Window
 {
-    private readonly BitmapSource _source;
+    private BitmapSource _source;
     private readonly Action<BitmapSource> _onSave;
     private readonly AnnotationDocument _doc = new();
     private readonly AnnotationLayer _layer;
     private readonly InlineToolbar _toolbar;
+    private readonly Aquashot.Settings.AppSettings _settings;
+    private readonly Aquashot.History.IOcrService? _ocr;
+
+    // Crop state: while active, a drag defines the crop rect (image px); Enter/click applies it.
+    private bool _cropMode;
+    private (double x, double y)? _cropStart;
+    private Point? _cropEndDip; // last crop end-point (DIP), set on every crop move AND mouse-up
+    private System.Windows.Shapes.Rectangle? _cropRect;
 
     // Fit-scale + letterbox offset that map the displayed image to the host (DIP) coords.
     private double _fitScale = 1;
@@ -41,12 +50,19 @@ public partial class AnnotationEditorWindow : Window
     private (double X, double Y) _moveLastImg;
 
     private bool _saved;
+    private bool _closed; // set on close so async continuations can bail before touching the window
 
-    public AnnotationEditorWindow(BitmapSource source, Action<BitmapSource> onSave)
+    // settings/ocr are optional so the editor can be opened standalone; onSave is last to allow a
+    // trailing-lambda call site (HistoryWindow passes it that way).
+    public AnnotationEditorWindow(BitmapSource source,
+        Aquashot.Settings.AppSettings? settings, Aquashot.History.IOcrService? ocr,
+        Action<BitmapSource> onSave)
     {
         InitializeComponent();
         _source = source;
         _onSave = onSave;
+        _settings = settings ?? new Aquashot.Settings.AppSettings();
+        _ocr = ocr;
         SourceImage.Source = source; // AnnotationRenderer.Draw ignores its source arg, so show the image here
 
         // Drawing surface sized to the IMAGE in pixels; a ScaleTransform fits it to the view,
@@ -69,6 +85,8 @@ public partial class AnnotationEditorWindow : Window
         _toolbar.PrimaryClicked += Save;
         _toolbar.CancelRequested += Close;
         _toolbar.EyedropperRequested += () => _sampling = true;
+        _toolbar.RedactRequested += OnRedact;
+        _toolbar.CropModeChanged += OnCropModeChanged;
         ToolbarHost.Content = _toolbar;
 
         // Open clamped to the source size, but no larger than ~80% of the work area.
@@ -111,6 +129,7 @@ public partial class AnnotationEditorWindow : Window
             _sampling = false;
             return;
         }
+        if (_cropMode) { CropDown(e); return; }
 
         var (cx, cy) = ToImage(e.GetPosition(Overlay));
         var tool = _toolbar.CurrentTool;
@@ -140,6 +159,7 @@ public partial class AnnotationEditorWindow : Window
                 if (!string.IsNullOrEmpty(text)) { _doc.Add(new TextShape(cx, cy, text!, color, w)); _layer.Refresh(); }
                 return;
             case ToolKind.Pen:
+            case ToolKind.Highlighter:
                 _penPoints = new List<(double, double)> { (cx, cy) };
                 _dragging = true;
                 Overlay.CaptureMouse();
@@ -154,6 +174,7 @@ public partial class AnnotationEditorWindow : Window
 
     private void OnMouseMove(object sender, MouseEventArgs e)
     {
+        if (_cropMode) { CropMove(e); return; }
         if (_toolbar.CurrentTool == ToolKind.Select)
         {
             if (!_dragging || !_movingSelected || _selectedIndex < 0) return;
@@ -166,7 +187,7 @@ public partial class AnnotationEditorWindow : Window
         }
         if (!_dragging) return;
         _lastDip = e.GetPosition(Overlay);
-        if (_toolbar.CurrentTool == ToolKind.Pen && _penPoints != null)
+        if (IsFreehand(_toolbar.CurrentTool) && _penPoints != null)
         {
             var (px, py) = ToImage(_lastDip);
             _penPoints.Add((px, py));
@@ -176,6 +197,7 @@ public partial class AnnotationEditorWindow : Window
 
     private void OnMouseUp(object sender, MouseButtonEventArgs e)
     {
+        if (_cropMode) { CropUp(e); return; }
         if (_toolbar.CurrentTool == ToolKind.Select)
         {
             _movingSelected = false;
@@ -190,11 +212,21 @@ public partial class AnnotationEditorWindow : Window
         _layer.Preview = null;
         if (_toolbar.CurrentTool == ToolKind.Pen && _penPoints != null && _penPoints.Count > 1)
             _doc.Add(new PenShape(_penPoints.ToArray(), _toolbar.CurrentColor, _toolbar.CurrentWidth));
+        else if (_toolbar.CurrentTool == ToolKind.Highlighter && _penPoints != null && _penPoints.Count > 1)
+            _doc.Add(new HighlightShape(_penPoints.ToArray(), _toolbar.CurrentColor,
+                _settings.HighlighterWidth, _settings.HighlighterOpacity));
+        else if (preview is SpotlightShape sp)
+        {
+            _doc.RemoveAllOfType<SpotlightShape>();
+            _doc.Add(sp);
+        }
         else if (preview != null)
             _doc.Add(preview);
         _penPoints = null;
         _layer.Refresh();
     }
+
+    private static bool IsFreehand(ToolKind t) => t is ToolKind.Pen or ToolKind.Highlighter;
 
     // Mouse-wheel adjusts the stroke/annotation size, refreshing any in-progress preview.
     private void OnMouseWheel(object sender, MouseWheelEventArgs e)
@@ -213,9 +245,13 @@ public partial class AnnotationEditorWindow : Window
         double w = _toolbar.CurrentWidth;
         bool fill = _toolbar.CurrentFill;
 
-        if (_toolbar.CurrentTool == ToolKind.Pen && _penPoints != null)
+        if (_penPoints != null)
         {
-            _layer.Preview = new PenShape(_penPoints.ToArray(), color, w);
+            if (_toolbar.CurrentTool == ToolKind.Highlighter)
+                _layer.Preview = new HighlightShape(_penPoints.ToArray(), color,
+                    _settings.HighlighterWidth, _settings.HighlighterOpacity);
+            else if (_toolbar.CurrentTool == ToolKind.Pen)
+                _layer.Preview = new PenShape(_penPoints.ToArray(), color, w);
             _layer.Refresh();
             return;
         }
@@ -226,6 +262,8 @@ public partial class AnnotationEditorWindow : Window
             ToolKind.Ellipse => MakeEllipse(sx, sy, cx, cy, color, w, fill),
             ToolKind.Line => new LineShape(sx, sy, cx, cy, color, w),
             ToolKind.Arrow => new ArrowShape(sx, sy, cx, cy, color, w),
+            ToolKind.Spotlight => new SpotlightShape(Math.Min(sx, cx), Math.Min(sy, cy),
+                Math.Abs(cx - sx), Math.Abs(cy - sy), _settings.SpotlightDimColor),
             _ => null
         };
         _layer.Refresh();
@@ -259,6 +297,11 @@ public partial class AnnotationEditorWindow : Window
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
+        if (_cropMode)
+        {
+            if (e.Key == Key.Enter) { ApplyCrop(); return; }
+            if (e.Key == Key.Escape) { CancelCrop(); return; }
+        }
         if (e.Key == Key.Escape) { Close(); return; }
         if (e.Key == Key.Enter) { Save(); return; }
         if (e.Key == Key.Z && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc.Undo(); ClearSelection(); _layer.Refresh(); }
@@ -269,6 +312,146 @@ public partial class AnnotationEditorWindow : Window
             ClearSelection();
             _layer.Refresh();
         }
+    }
+
+    // ---- Auto-redact ----
+
+    // OCR the source image and blur/pixelate every (matching) detected text line. No-op without OCR.
+    private async void OnRedact()
+    {
+        if (_ocr == null) return;
+        string? temp = null;
+        try
+        {
+            temp = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                "aqua-ocr-" + Guid.NewGuid().ToString("N") + ".png");
+            var enc = new PngBitmapEncoder();
+            enc.Frames.Add(BitmapFrame.Create(_source));
+            using (var fs = System.IO.File.Create(temp)) enc.Save(fs);
+
+            var lines = await _ocr.RecognizeLinesAsync(temp);
+            if (_closed) return; // the editor was closed while OCR was in flight
+            // Boxes are in the saved-image's pixel space == the editor's image space (offset 0,0).
+            var chosen = Aquashot.Redaction.AutoRedactor.SelectLines(lines, _settings.RedactPatterns);
+            var shapes = Aquashot.Redaction.AutoRedactor.BuildShapes(chosen, 0, 0,
+                _settings.RedactStyle, _settings.RedactBlurRadius, _settings.RedactPixelateBlock);
+            if (shapes.Count > 0) { _doc.AddRange(shapes); _layer.Refresh(); }
+        }
+        catch { /* best-effort */ }
+        finally { if (temp != null) try { System.IO.File.Delete(temp); } catch { } }
+    }
+
+    // ---- Post-capture crop ----
+
+    private void OnCropModeChanged(bool on)
+    {
+        _cropMode = on;
+        ClearSelection();
+        ClearCropRect();
+        _cropStart = null;
+        _cropEndDip = null;
+        Cursor = on ? Cursors.Cross : (_toolbar.CurrentTool == ToolKind.Select ? Cursors.Arrow : Cursors.Cross);
+    }
+
+    private void CropDown(MouseButtonEventArgs e)
+    {
+        var p = e.GetPosition(Overlay);
+        _cropStart = ToImage(p);
+        _cropEndDip = p; // seed the end-point so a click-then-Enter (no move) has a real position
+        _dragging = true;
+        Overlay.CaptureMouse();
+        EnsureCropRect();
+    }
+
+    private void CropMove(MouseEventArgs e)
+    {
+        if (!_dragging || _cropStart is not (double sx, double sy)) return;
+        _cropEndDip = e.GetPosition(Overlay);
+        var (cx, cy) = ToImage(_cropEndDip.Value);
+        // Position the crop rect overlay in DIP (over the image), derived from image-px corners.
+        double x0 = Math.Min(sx, cx), y0 = Math.Min(sy, cy);
+        double w = Math.Abs(cx - sx), h = Math.Abs(cy - sy);
+        Canvas.SetLeft(_cropRect!, _offX + x0 * _fitScale);
+        Canvas.SetTop(_cropRect!, _offY + y0 * _fitScale);
+        _cropRect!.Width = w * _fitScale;
+        _cropRect.Height = h * _fitScale;
+    }
+
+    private void CropUp(MouseButtonEventArgs e)
+    {
+        // Record the actual release position before clearing the drag, so ApplyCrop (via Enter or
+        // the toolbar button) uses where the mouse was lifted, not the last tracked move event.
+        _cropEndDip = e.GetPosition(Overlay);
+        _dragging = false;
+        Overlay.ReleaseMouseCapture();
+        // Leave the rect on screen; Enter or a click on the crop button applies it. (Tiny drags do nothing.)
+    }
+
+    // Apply the pending crop: crop the source, shift all shapes by -origin, relayout, untick the tool.
+    private void ApplyCrop()
+    {
+        if (_cropStart is not (double sx, double sy) || _cropRect == null || _cropEndDip is not Point endDip) return;
+        var (cx, cy) = ToImage(endDip);
+        double x0 = Math.Min(sx, cx), y0 = Math.Min(sy, cy);
+        double w = Math.Abs(cx - sx), h = Math.Abs(cy - sy);
+        if (w < 2 || h < 2) { CancelCrop(); return; }
+
+        var crop = new PixelRect(x0, y0, w, h);
+        // Clamp ONCE and use the same integer pixel origin for both the bitmap crop and the shape
+        // translation, so a fractional drag origin can't leave shapes offset from the cropped content.
+        var clamped = CropController.Clamp(_source.PixelWidth, _source.PixelHeight, crop);
+        var clampedRect = new PixelRect(clamped.X, clamped.Y, clamped.Width, clamped.Height);
+        var cropped = CropController.Apply(_source, clampedRect);
+
+        var moved = CropController.TranslateShapes(_doc.Shapes, -clamped.X, -clamped.Y);
+        _doc.ReplaceAll(moved);
+
+        _source = cropped;
+        SourceImage.Source = cropped;
+        _layer.Source = cropped;
+        _layer.Width = cropped.PixelWidth;
+        _layer.Height = cropped.PixelHeight;
+
+        ClearCropRect();
+        _cropStart = null;
+        _cropEndDip = null;
+        _cropMode = false;
+        _toolbar.ResetCropToggle();
+        Layout();
+    }
+
+    private void CancelCrop()
+    {
+        ClearCropRect();
+        _cropStart = null;
+        _cropEndDip = null;
+        _cropMode = false;
+        _toolbar.ResetCropToggle();
+    }
+
+    private void EnsureCropRect()
+    {
+        if (_cropRect != null) { ClearCropRect(); }
+        _cropRect = new System.Windows.Shapes.Rectangle
+        {
+            Stroke = new SolidColorBrush(Color.FromRgb(0x4D, 0xA3, 0xFF)),
+            StrokeThickness = 1.5,
+            StrokeDashArray = new DoubleCollection { 4, 3 },
+            Fill = new SolidColorBrush(Color.FromArgb(0x33, 0x4D, 0xA3, 0xFF)),
+            IsHitTestVisible = false
+        };
+        Overlay.Children.Add(_cropRect);
+    }
+
+    private void ClearCropRect()
+    {
+        if (_cropRect != null) { Overlay.Children.Remove(_cropRect); _cropRect = null; }
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _closed = true; // let any in-flight OCR continuation bail instead of touching a closed window
+        base.OnClosed(e);
     }
 
     // Flatten the source + annotations into one bitmap and hand it to the caller, then close.

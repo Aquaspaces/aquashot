@@ -24,6 +24,9 @@ public sealed class GlobalEscHook : IDisposable
         _onEsc = onEsc;
         _proc = HookCallback;
         _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(null), 0);
+        if (_hook == IntPtr.Zero) // a failed install would leave Esc-to-cancel silently dead
+            throw new InvalidOperationException(
+                $"SetWindowsHookEx(WH_KEYBOARD_LL) failed: {Marshal.GetLastWin32Error()}");
     }
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)

@@ -27,6 +27,9 @@ public partial class InlineToolbar : UserControl
     public event Action? ColorSampleRequested;    // sample a screen pixel and copy its hex
     public event Action<int>? DelayedCaptureRequested; // re-capture this region after N seconds
     public event Action? FreezeToggleRequested;   // show live region / re-freeze a fresh snapshot
+    public event Action? RedactRequested;         // run OCR auto-redact over the current image
+    public event Action<bool>? CropModeChanged;   // crop tool toggled on/off (editor only)
+    public event Action? PauseToggleRequested;    // pause/resume the in-progress recording
 
     public CaptureOutput CurrentOutput { get; private set; } = CaptureOutput.Image;
     public ToolKind CurrentTool { get; private set; } = ToolKind.Arrow;
@@ -56,6 +59,12 @@ public partial class InlineToolbar : UserControl
         ToolPen.Checked     += (_, __) => SetTool(ToolKind.Pen);
         ToolText.Checked    += (_, __) => SetTool(ToolKind.Text);
         ToolCounter.Checked += (_, __) => SetTool(ToolKind.Counter);
+        ToolHighlight.Checked += (_, __) => SetTool(ToolKind.Highlighter);
+        ToolSpotlight.Checked += (_, __) => SetTool(ToolKind.Spotlight);
+
+        BtnRedact.Click += (_, __) => RedactRequested?.Invoke();
+        ToolCropBtn.Checked   += (_, __) => CropModeChanged?.Invoke(true);
+        ToolCropBtn.Unchecked += (_, __) => CropModeChanged?.Invoke(false);
 
         BtnUndo.Click    += (_, __) => UndoRequested?.Invoke();
         BtnRedo.Click    += (_, __) => RedoRequested?.Invoke();
@@ -68,6 +77,7 @@ public partial class InlineToolbar : UserControl
 
         BtnColorCopy.Click += (_, __) => ColorSampleRequested?.Invoke();
         BtnFreeze.Click    += (_, __) => FreezeToggleRequested?.Invoke();
+        BtnPause.Click     += (_, __) => PauseToggleRequested?.Invoke();
         // Delay is a quick menu (3/5/10s); open it under the button on click.
         BtnDelay.Click += (_, __) => { if (DelayMenu != null) { DelayMenu.PlacementTarget = BtnDelay; DelayMenu.IsOpen = true; } };
 
@@ -97,8 +107,21 @@ public partial class InlineToolbar : UserControl
         BtnPrimary.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hexColor)!);
     }
 
-    public void ShowTimer(bool on) => RecTimer.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+    public void ShowTimer(bool on)
+    {
+        var v = on ? Visibility.Visible : Visibility.Collapsed;
+        RecTimer.Visibility = v;
+        BtnPause.Visibility = v; // the pause button only makes sense while recording
+        if (on) SetPaused(false);
+    }
     public void SetTimer(string text) => RecTimer.Text = text;
+
+    // Swap the pause/resume glyph + tooltip to mirror the recording state.
+    public void SetPaused(bool paused)
+    {
+        BtnPause.Tag = FindResource(paused ? "Icon.Play" : "Icon.Pause");
+        BtnPause.ToolTip = paused ? "Resume recording" : "Pause recording";
+    }
 
     /// <summary>Re-annotation editor reuse: hide capture-only controls (output modes, record
     /// actions, pin/freeze/delay/sample, timer) and relabel the primary button to "Save".</summary>
@@ -106,10 +129,20 @@ public partial class InlineToolbar : UserControl
     {
         Collapse(ModeImage); Collapse(ModeGif); Collapse(ModeVideo);
         Collapse(BtnPin); Collapse(BtnColorCopy); Collapse(BtnDelay); Collapse(BtnFreeze);
-        Collapse(RecTimer);
+        Collapse(RecTimer); Collapse(BtnPause);
+        ToolCropBtn.Visibility = Visibility.Visible; // crop is a re-annotation-editor feature
         SetPrimary("Save", "#3B82F6");
         BtnPrimary.ToolTip = "Save annotations (Enter)";
     }
+
+    // Untick the crop toggle without re-raising CropModeChanged (used after a crop is applied/cancelled).
+    public void ResetCropToggle()
+    {
+        if (ToolCropBtn.IsChecked != true) return;
+        ToolCropBtn.IsChecked = false; // Unchecked fires CropModeChanged(false); callers expect that
+    }
+
+    public bool IsCropActive => ToolCropBtn.IsChecked == true;
 
     private static void Collapse(UIElement e) => e.Visibility = Visibility.Collapsed;
 

@@ -18,6 +18,10 @@ public class OverlayController
     // The headless recording engine the overlay's toolbar drives (set by the tray).
     public RecordingController? Recorder { get; set; }
 
+    // App settings + OCR service threaded to each overlay (highlighter/spotlight/auto-redact).
+    public Aquashot.Settings.AppSettings Settings { get; set; } = new();
+    public Aquashot.History.IOcrService? Ocr { get; set; }
+
     // Default clipboard action for the confirm/Stop button (set by the tray from settings).
     public Aquashot.Output.ClipboardMode DefaultClip { get; set; } = Aquashot.Output.ClipboardMode.Image;
 
@@ -28,13 +32,16 @@ public class OverlayController
     public event Action? PinRequested;
     public event Action? Cancelled;
     public event Action<PixelRect, int>? DelayedCapture; // region, seconds — re-capture later
+    public event Action<PixelRect>? RegionCommitted;     // LAST-REGION: the committed selection
 
     public void Show(IReadOnlyList<CapturedFrame> frames)
     {
         foreach (var frame in frames)
         {
-            var w = new OverlayWindow(frame) { Mode = Mode, Recorder = Recorder, DefaultClip = DefaultClip };
+            var w = new OverlayWindow(frame)
+            { Mode = Mode, Recorder = Recorder, DefaultClip = DefaultClip, Settings = Settings, Ocr = Ocr };
             w.RegionCommitted += CloseOthers;
+            w.RegionCommittedRect += r => RegionCommitted?.Invoke(r);
             w.Confirmed += (f, r, d, clip) => { Close(); Confirmed?.Invoke(f, r, d, clip); };
             w.PinRequested += () => { Close(); PinRequested?.Invoke(); };
             w.Cancelled += () => { Close(); Cancelled?.Invoke(); };
