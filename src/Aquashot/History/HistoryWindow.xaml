@@ -3,19 +3,41 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:h="clr-namespace:Aquashot.History"
         Title="Aquashot — History" Width="1000" Height="680"
+        AllowDrop="True"
         Background="{StaticResource B.Surface}">
   <Window.Resources>
     <!-- All buttons in this window use the dark themed button (default WPF buttons render
          gray with near-white text from the app-wide TextBlock style = unreadable). -->
     <Style TargetType="Button" BasedOn="{StaticResource GhostButton}"/>
+
+    <!-- Segmented file-type filter chip (reuses the ModeChip look from the capture toolbar). -->
+    <Style x:Key="FilterChip" TargetType="RadioButton" BasedOn="{StaticResource ModeChip}">
+      <Setter Property="MinWidth" Value="54"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
   </Window.Resources>
+
   <DockPanel Margin="10">
     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-      <TextBlock Text="Size" VerticalAlignment="Center" Margin="0,0,6,0"
+      <TextBlock Text="Size" VerticalAlignment="Center" Margin="10,0,6,0"
                  Foreground="{StaticResource B.Text}" DockPanel.Dock="Right"/>
       <Slider x:Name="SizeSlider" Minimum="120" Maximum="480" Width="160"
               VerticalAlignment="Center" DockPanel.Dock="Right"/>
-      <TextBox x:Name="SearchBox" VerticalContentAlignment="Center" Height="30"
+
+      <!-- File-type filter: All / Images / GIF / Video -->
+      <Border DockPanel.Dock="Right" CornerRadius="7" Padding="2" Margin="10,0,4,0"
+              VerticalAlignment="Center" Background="{StaticResource B.SurfaceAlt}"
+              BorderBrush="{StaticResource B.Border}" BorderThickness="1">
+        <StackPanel Orientation="Horizontal">
+          <RadioButton x:Name="FilterAll"    Style="{StaticResource FilterChip}" Content="All" IsChecked="True"/>
+          <RadioButton x:Name="FilterImages" Style="{StaticResource FilterChip}" Content="Images"/>
+          <RadioButton x:Name="FilterGif"    Style="{StaticResource FilterChip}" Content="GIF"/>
+          <RadioButton x:Name="FilterVideo"  Style="{StaticResource FilterChip}" Content="Video"/>
+        </StackPanel>
+      </Border>
+
+      <TextBox x:Name="SearchBox" MinHeight="32" MinWidth="220" Padding="8,4"
+               VerticalContentAlignment="Center"
                ToolTip="Search file names and text inside screenshots"/>
     </DockPanel>
 
@@ -28,18 +50,27 @@
         </ListBox.ItemsPanel>
         <ListBox.ItemTemplate>
           <DataTemplate>
-            <StackPanel Width="{Binding DataContext.TileSize, RelativeSource={RelativeSource AncestorType=Window}}" Margin="6">
+            <StackPanel Width="{Binding DataContext.TileSize, RelativeSource={RelativeSource AncestorType=Window}}" Margin="6"
+                        Background="Transparent"
+                        MouseEnter="Tile_MouseEnter" MouseLeave="Tile_MouseLeave">
               <StackPanel.ContextMenu>
                 <ContextMenu>
                   <MenuItem Header="Open" Click="Open_Click"/>
+                  <MenuItem Header="Edit" Click="Edit_Click" IsEnabled="{Binding IsImage}"/>
                   <MenuItem Header="Copy" Click="Copy_Click"/>
                   <MenuItem Header="Reveal in folder" Click="Reveal_Click"/>
                   <MenuItem Header="Delete" Click="Delete_Click"/>
                 </ContextMenu>
               </StackPanel.ContextMenu>
-              <Image Source="{Binding Thumb}"
-                     Height="{Binding DataContext.TileImageHeight, RelativeSource={RelativeSource AncestorType=Window}}"
-                     Stretch="Uniform"/>
+              <Grid Height="{Binding DataContext.TileImageHeight, RelativeSource={RelativeSource AncestorType=Window}}">
+                <Image x:Name="TileImage" Source="{Binding Thumb}" Stretch="Uniform"/>
+                <!-- Play badge for .mp4 tiles -->
+                <Border Width="34" Height="34" CornerRadius="17" Background="#99000000"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Visibility="{Binding VideoBadgeVisibility}">
+                  <Path Data="M8 5v14l11-7z" Fill="White" Width="16" Height="16" Stretch="Uniform"/>
+                </Border>
+              </Grid>
               <TextBlock Text="{Binding Name}" Foreground="{StaticResource B.Text}" TextTrimming="CharacterEllipsis"/>
               <TextBlock Text="{Binding Date}" Foreground="{StaticResource B.Text}" Opacity="0.6" FontSize="11"/>
             </StackPanel>
@@ -52,11 +83,68 @@
           <Button x:Name="BtnPrev" Content="◀" Width="36" ToolTip="Previous (←)"/>
           <Button x:Name="BtnNext" Content="▶" Width="36" Margin="4,0" ToolTip="Next (→)"/>
           <Button x:Name="BtnClose" Content="Close" DockPanel.Dock="Right" ToolTip="Back to grid (Esc)"/>
+          <Button x:Name="BtnEdit" Content="Edit" DockPanel.Dock="Right" Margin="4,0"
+                  ToolTip="Annotate a copy (saved as a new file)"/>
           <Button x:Name="BtnCopyText" Content="Copy all text" DockPanel.Dock="Right" Margin="4,0"/>
           <Button x:Name="BtnCopyImage" Content="Copy image" DockPanel.Dock="Right" Margin="4,0"/>
           <TextBlock x:Name="DetailTitle" VerticalAlignment="Center" Margin="8,0"
                      Foreground="{StaticResource B.Text}" TextTrimming="CharacterEllipsis"/>
         </DockPanel>
+
+        <!-- Filmstrip carousel of all currently-filtered captures, docked at the bottom. -->
+        <Border DockPanel.Dock="Bottom" Height="84" Margin="0,8,0,0" CornerRadius="7"
+                Background="{StaticResource B.SurfaceAlt}" BorderBrush="{StaticResource B.Border}"
+                BorderThickness="1">
+          <ListBox x:Name="Filmstrip" BorderThickness="0" Background="Transparent" Padding="4,0"
+                   ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                   ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                   VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                   PreviewMouseWheel="Filmstrip_PreviewMouseWheel"
+                   SelectionChanged="Filmstrip_SelectionChanged">
+            <ListBox.ItemsPanel>
+              <ItemsPanelTemplate>
+                <VirtualizingStackPanel Orientation="Horizontal"/>
+              </ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
+            <ListBox.ItemContainerStyle>
+              <Style TargetType="ListBoxItem">
+                <Setter Property="Margin" Value="3"/>
+                <Setter Property="Padding" Value="0"/>
+                <Setter Property="Template">
+                  <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                      <Border x:Name="bd" CornerRadius="5" BorderThickness="2"
+                              BorderBrush="Transparent" Background="#22000000">
+                        <ContentPresenter/>
+                      </Border>
+                      <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                          <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource B.Border}"/>
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                          <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource B.Accent}"/>
+                        </Trigger>
+                      </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                  </Setter.Value>
+                </Setter>
+              </Style>
+            </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid Width="96" Height="64" ToolTip="{Binding Name}">
+                  <Image Source="{Binding Thumb}" Stretch="Uniform"/>
+                  <Border Width="22" Height="22" CornerRadius="11" Background="#99000000"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                          Visibility="{Binding VideoBadgeVisibility}">
+                    <Path Data="M8 5v14l11-7z" Fill="White" Width="10" Height="10" Stretch="Uniform"/>
+                  </Border>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Border>
+
         <h:OcrTextOverlay x:Name="Overlay"/>
       </DockPanel>
     </Grid>

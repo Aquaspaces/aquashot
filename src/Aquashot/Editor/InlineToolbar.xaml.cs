@@ -100,6 +100,19 @@ public partial class InlineToolbar : UserControl
     public void ShowTimer(bool on) => RecTimer.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
     public void SetTimer(string text) => RecTimer.Text = text;
 
+    /// <summary>Re-annotation editor reuse: hide capture-only controls (output modes, record
+    /// actions, pin/freeze/delay/sample, timer) and relabel the primary button to "Save".</summary>
+    public void SetEditorMode()
+    {
+        Collapse(ModeImage); Collapse(ModeGif); Collapse(ModeVideo);
+        Collapse(BtnPin); Collapse(BtnColorCopy); Collapse(BtnDelay); Collapse(BtnFreeze);
+        Collapse(RecTimer);
+        SetPrimary("Save", "#3B82F6");
+        BtnPrimary.ToolTip = "Save annotations (Enter)";
+    }
+
+    private static void Collapse(UIElement e) => e.Visibility = Visibility.Collapsed;
+
     private RadioButton? _customSwatch;
 
     /// <summary>Set the active annotation color (from the eyedropper or color wheel) and

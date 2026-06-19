@@ -1,0 +1,23 @@
+<Window x:Class="Aquashot.Editor.AnnotationEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Edit annotations" Background="{StaticResource B.Surface}"
+        WindowStartupLocation="CenterScreen" UseLayoutRounding="True"
+        MinWidth="320" MinHeight="240"
+        KeyDown="OnKeyDown">
+    <Grid>
+        <!-- Image area: the source is centred and fit-scaled (Uniform); the drawing layer
+             is aligned exactly over it via a ScaleTransform so clicks map to image pixels. -->
+        <Grid x:Name="ImageHost" ClipToBounds="True">
+            <Canvas x:Name="Overlay" Background="Transparent"
+                    MouseLeftButtonDown="OnMouseDown"
+                    MouseMove="OnMouseMove"
+                    MouseLeftButtonUp="OnMouseUp"
+                    MouseWheel="OnMouseWheel"/>
+        </Grid>
+
+        <!-- Toolbar floats over the bottom of the image. -->
+        <ContentControl x:Name="ToolbarHost" HorizontalAlignment="Center"
+                        VerticalAlignment="Bottom" Margin="0,0,0,16"/>
+    </Grid>
+</Window>

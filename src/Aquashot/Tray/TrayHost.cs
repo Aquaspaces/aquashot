@@ -267,7 +267,9 @@ public class TrayHost : IDisposable
             {
                 _settings = _settings with { HistoryThumbSize = size };
                 _store.Save(_settings);
-            });
+            },
+            // Re-annotate: persist the flattened bitmap as a NEW file, then index it like a capture.
+            img => { var p = _output.SaveComposite(img, _settings, DateTime.Now); Remember(p); return p; });
         _historyWindow.Show();
         if (openPath != null)
         {

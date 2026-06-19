@@ -4,17 +4,50 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Aquashot.Settings;
 
 namespace Aquashot.History;
 
 public partial class HistoryWindow : Window, INotifyPropertyChanged
 {
-    public record Tile(string Path, string Name, string Date, BitmapImage? Thumb);
+    // A grid/filmstrip tile. Mutable + observable so the thumbnail can be decoded off the UI
+    // thread and filled in after the tile is already bound (placeholder until it arrives).
+    public sealed class Tile : INotifyPropertyChanged
+    {
+        public Tile(string path, string name, string date)
+        {
+            Path = path; Name = name; Date = date; Kind = MediaKinds.Of(path);
+        }
+
+        public string Path { get; }
+        public string Name { get; }
+        public string Date { get; }
+        public MediaKind Kind { get; }
+
+        public bool IsImage => Kind == MediaKind.Image;
+        public bool IsGif => Kind == MediaKind.Gif;
+        public bool IsVideo => Kind == MediaKind.Video;
+        public Visibility VideoBadgeVisibility => IsVideo ? Visibility.Visible : Visibility.Collapsed;
+
+        private BitmapSource? _thumb;
+        public BitmapSource? Thumb
+        {
+            get => _thumb;
+            set { _thumb = value; PropertyChanged?.Invoke(this, ThumbChanged); }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        private static readonly PropertyChangedEventArgs ThumbChanged = new(nameof(Thumb));
+    }
+
+    private static readonly string[] DropExts = { ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".mp4" };
 
     private readonly CaptureLibrary _lib;
     private readonly OcrIndexer _indexer;
@@ -22,9 +55,30 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
     private readonly string _saveFolder;
     private readonly bool _enableOcr;
     private readonly Action<int> _persistThumbSize;
+    private readonly Func<BitmapSource, string>? _reannotateSave;
 
+    private readonly ThumbnailCache _thumbs = new();
     private List<Tile> _filtered = new();
     private int _detailIndex = -1;
+
+    // Debounce timers: keystroke -> rebuild, and detail step -> heavy decode.
+    private readonly DispatcherTimer _searchTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
+    private readonly DispatcherTimer _detailTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
+
+    // Generation token so a stale async thumbnail decode can't overwrite a fresher Refresh.
+    private int _refreshGen;
+
+    // Hover-play: at most one GIF animates at a time.
+    private GifAnimator.Clip? _hoverClip;
+    private int _hoverFrame;
+    private System.Windows.Controls.Image? _hoverImage;
+    private Tile? _hoverTile;
+    private readonly DispatcherTimer _hoverTimer = new();
+
+    // Drag-out press origin.
+    private System.Windows.Point _pressOrigin;
+    private bool _maybeDrag;
+    private bool _dragging;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -37,64 +91,109 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
     public double TileImageHeight => _tileSize * 0.62;
     private void OnChanged(string n) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));
 
+    // Decode width sized to roughly the on-screen tile pixel size (kept off a fixed 480).
+    private int DecodeWidth => Math.Clamp((int)(TileSize * 2), 160, 480);
+
     public HistoryWindow(CaptureLibrary lib, OcrIndexer indexer, IOcrService ocr,
-        string saveFolder, bool enableOcr, int thumbSize, Action<int> persistThumbSize)
+        string saveFolder, bool enableOcr, int thumbSize, Action<int> persistThumbSize,
+        Func<BitmapSource, string>? reannotateSave = null)
     {
         InitializeComponent();
         DataContext = this;
         _lib = lib; _indexer = indexer; _ocr = ocr; _saveFolder = saveFolder;
         _enableOcr = enableOcr; _persistThumbSize = persistThumbSize;
+        _reannotateSave = reannotateSave;
 
         TileSize = Math.Clamp(thumbSize, 120, 480);
         SizeSlider.Value = TileSize;
         SizeSlider.ValueChanged += (_, e) => TileSize = e.NewValue;
         SizeSlider.PreviewMouseUp += (_, __) => _persistThumbSize((int)TileSize);
 
-        SearchBox.TextChanged += (_, __) => Refresh(SearchBox.Text);
+        // Debounced search: each keystroke restarts a 200ms timer instead of rebuilding the list.
+        SearchBox.TextChanged += (_, __) => { _searchTimer.Stop(); _searchTimer.Start(); };
+        _searchTimer.Tick += (_, __) => { _searchTimer.Stop(); Refresh(); };
+
+        // File-type filter chips: changing the filter re-applies it combined with the query.
+        FilterAll.Checked += (_, __) => Refresh();
+        FilterImages.Checked += (_, __) => Refresh();
+        FilterGif.Checked += (_, __) => Refresh();
+        FilterVideo.Checked += (_, __) => Refresh();
+
         Grid.MouseDoubleClick += (_, __) => OpenDetailForSelected();
+        Grid.PreviewMouseLeftButtonDown += Grid_PreviewMouseLeftButtonDown;
+        Grid.PreviewMouseMove += Grid_PreviewMouseMove;
+        Grid.PreviewMouseLeftButtonUp += (_, __) => { _maybeDrag = false; };
 
         BtnPrev.Click += (_, __) => StepDetail(-1);
         BtnNext.Click += (_, __) => StepDetail(+1);
         BtnClose.Click += (_, __) => CloseDetail();
         BtnCopyText.Click += (_, __) => CopyAllText();
         BtnCopyImage.Click += (_, __) => CopyCurrentImage();
+        BtnEdit.Click += (_, __) => EditCurrent();
         PreviewKeyDown += OnKey;
+
+        _detailTimer.Tick += (_, __) => { _detailTimer.Stop(); LoadDetailHeavy(); };
+        _hoverTimer.Tick += AdvanceHover;
+
+        // Drop-in support.
+        AllowDrop = true;
+        DragOver += Window_DragOver;
+        Drop += Window_Drop;
 
         Loaded += async (_, __) =>
         {
-            Refresh("");
+            Refresh();
             if (_enableOcr) await _indexer.BackfillAsync(_saveFolder);
-            Refresh(SearchBox.Text);
+            Refresh();
         };
     }
 
-    private void Refresh(string query)
+    private MediaFilter CurrentFilter()
     {
-        _filtered = _lib.Search(query).Select(e => new Tile(
-            e.Path, Path.GetFileName(e.Path), e.CapturedAt.ToString("g"), Thumb(e.Path))).ToList();
-        Grid.ItemsSource = _filtered;
-        // Rebuilding the list can leave _detailIndex past the end (e.g. user searches while the
-        // detail panel is open). Drop back to the grid rather than indexing out of range.
-        if (DetailPanel.Visibility == Visibility.Visible && _detailIndex >= _filtered.Count)
-            CloseDetail();
+        if (FilterImages.IsChecked == true) return MediaFilter.Images;
+        if (FilterGif.IsChecked == true) return MediaFilter.Gif;
+        if (FilterVideo.IsChecked == true) return MediaFilter.Video;
+        return MediaFilter.All;
     }
 
-    private static BitmapImage? Thumb(string path)
+    private void Refresh()
     {
-        try
+        var query = SearchBox?.Text ?? "";
+        var filter = CurrentFilter();
+        var gen = ++_refreshGen; // invalidate in-flight thumbnail decodes from a previous Refresh
+
+        // Preserve the detail target across a rebuild so search-while-open lands on the same item.
+        var openPath = _detailIndex >= 0 && _detailIndex < _filtered.Count ? _filtered[_detailIndex].Path : null;
+
+        _filtered = _lib.Search(query)
+            .Where(e => MediaKinds.Matches(filter, e.Path))
+            .Select(e => new Tile(e.Path, Path.GetFileName(e.Path), e.CapturedAt.ToString("g")))
+            .ToList();
+
+        // Reuse already-decoded thumbnails synchronously; decode the rest off the UI thread.
+        int w = DecodeWidth;
+        foreach (var tile in _filtered)
         {
-            // OnLoad reads the file fully and releases the handle, so a later Delete won't fail
-            // with "file in use". DecodePixelWidth keeps memory/CPU modest at the larger preview size.
-            var bi = new BitmapImage();
-            bi.BeginInit();
-            bi.UriSource = new Uri(path);
-            bi.DecodePixelWidth = 480;
-            bi.CacheOption = BitmapCacheOption.OnLoad;
-            bi.EndInit();
-            bi.Freeze();
-            return bi;
+            tile.Thumb = _thumbs.TryGet(tile.Path, w);
+            if (tile.Thumb == null) FillThumbAsync(tile, w, gen);
         }
-        catch { return null; }
+
+        Grid.ItemsSource = _filtered;
+        Filmstrip.ItemsSource = _filtered;
+
+        if (DetailPanel.Visibility == Visibility.Visible)
+        {
+            int i = openPath == null ? -1 : _filtered.FindIndex(
+                t => string.Equals(t.Path, openPath, StringComparison.OrdinalIgnoreCase));
+            if (i < 0) CloseDetail();
+            else { _detailIndex = i; SyncFilmstripSelection(); }
+        }
+    }
+
+    private async void FillThumbAsync(Tile tile, int decodeWidth, int gen)
+    {
+        var bi = await _thumbs.GetAsync(tile.Path, decodeWidth);
+        if (gen == _refreshGen && bi != null) tile.Thumb = bi; // ignore stale decodes
     }
 
     private void OpenDetailForSelected()
@@ -110,39 +209,62 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         if (i >= 0) ShowDetail(i);
     }
 
+    // Light part of showing a detail: index, title, filmstrip highlight — instant on every step.
+    // The heavy full-image decode + OCR lines are debounced and run on the final landed index.
     private void ShowDetail(int index)
     {
         if (index < 0 || index >= _filtered.Count) return;
+        StopHover();
         _detailIndex = index;
         var tile = _filtered[index];
         DetailTitle.Text = $"{tile.Name}   {tile.Date}";
         Grid.Visibility = Visibility.Collapsed; // hide the gallery so it can't take focus/clicks
         DetailPanel.Visibility = Visibility.Visible;
+        BtnEdit.IsEnabled = tile.IsImage && _reannotateSave != null;
+        SyncFilmstripSelection();
 
-        if (tile.Path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+        _detailTimer.Stop();
+        _detailTimer.Start();
+    }
+
+    // Runs ~120ms after the user settles on an index. Decodes off the UI thread and guards by the
+    // landed index so a fast arrow run only pays for the final image.
+    private async void LoadDetailHeavy()
+    {
+        int index = _detailIndex;
+        if (index < 0 || index >= _filtered.Count) return;
+        var tile = _filtered[index];
+
+        if (tile.IsGif)
         {
-            Overlay.SetAnimatedGif(tile.Path); // animate instead of showing a frozen first frame
+            Overlay.SetAnimatedGif(tile.Path); // animate instead of a frozen first frame
         }
         else
         {
-            try
+            var path = tile.Path;
+            var full = await Task.Run(() =>
             {
-                var full = new BitmapImage();
-                full.BeginInit(); full.UriSource = new Uri(tile.Path);
-                full.CacheOption = BitmapCacheOption.OnLoad; full.EndInit(); full.Freeze();
-                Overlay.SetImage(full);
-            }
-            catch { Overlay.SetImage(null); }
+                try
+                {
+                    var bi = new BitmapImage();
+                    bi.BeginInit(); bi.UriSource = new Uri(path);
+                    bi.CacheOption = BitmapCacheOption.OnLoad; bi.EndInit(); bi.Freeze();
+                    return (BitmapSource?)bi;
+                }
+                catch { return null; }
+            });
+            if (_detailIndex != index) return; // user already stepped away; drop this stale image
+            Overlay.SetImage(full);
         }
 
-        LoadLines(tile.Path);
+        LoadLines(tile.Path, index);
     }
 
-    private async void LoadLines(string path)
+    private async void LoadLines(string path, int index)
     {
         var lines = await _ocr.RecognizeLinesAsync(path);
-        if (_detailIndex >= 0 && _detailIndex < _filtered.Count &&
-            string.Equals(_filtered[_detailIndex].Path, path, StringComparison.OrdinalIgnoreCase))
+        if (_detailIndex == index && index >= 0 && index < _filtered.Count &&
+            string.Equals(_filtered[index].Path, path, StringComparison.OrdinalIgnoreCase))
             Overlay.SetLines(lines);
     }
 
@@ -154,17 +276,59 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
 
     private void CloseDetail()
     {
+        _detailTimer.Stop();
         DetailPanel.Visibility = Visibility.Collapsed;
         Grid.Visibility = Visibility.Visible;
         _detailIndex = -1;
     }
 
+    // ===== Filmstrip =====
+
+    private void SyncFilmstripSelection()
+    {
+        if (_detailIndex < 0 || _detailIndex >= _filtered.Count) return;
+        Filmstrip.SelectedIndex = _detailIndex;
+        // Scroll the current item into view once the container is realized.
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+        {
+            if (_detailIndex >= 0 && _detailIndex < _filtered.Count)
+                Filmstrip.ScrollIntoView(_filtered[_detailIndex]);
+        }));
+    }
+
+    private void Filmstrip_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        int i = Filmstrip.SelectedIndex;
+        if (i >= 0 && i != _detailIndex) ShowDetail(i);
+    }
+
+    // Mouse wheel scrolls the strip horizontally instead of doing nothing in a horizontal list.
+    private void Filmstrip_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        var sv = FindScrollViewer(Filmstrip);
+        if (sv == null) return;
+        sv.ScrollToHorizontalOffset(sv.HorizontalOffset - e.Delta);
+        e.Handled = true;
+    }
+
+    private static ScrollViewer? FindScrollViewer(DependencyObject root)
+    {
+        if (root is ScrollViewer sv) return sv;
+        int n = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < n; i++)
+        {
+            var found = FindScrollViewer(VisualTreeHelper.GetChild(root, i));
+            if (found != null) return found;
+        }
+        return null;
+    }
+
     private void OnKey(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (DetailPanel.Visibility != Visibility.Visible) return;
-        if (e.Key == System.Windows.Input.Key.Escape) { CloseDetail(); e.Handled = true; }
-        else if (e.Key == System.Windows.Input.Key.Left) { StepDetail(-1); e.Handled = true; }
-        else if (e.Key == System.Windows.Input.Key.Right) { StepDetail(+1); e.Handled = true; }
+        if (e.Key == Key.Escape) { CloseDetail(); e.Handled = true; }
+        else if (e.Key == Key.Left) { StepDetail(-1); e.Handled = true; }
+        else if (e.Key == Key.Right) { StepDetail(+1); e.Handled = true; }
     }
 
     private void CopyAllText()
@@ -176,19 +340,225 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
     private void CopyCurrentImage()
     {
         if (_detailIndex < 0 || _detailIndex >= _filtered.Count) return;
-        var path = _filtered[_detailIndex].Path;
+        CopyImageToClipboard(_filtered[_detailIndex].Path);
+    }
+
+    private static void CopyImageToClipboard(string path)
+    {
         try
         {
             var img = new BitmapImage();
             img.BeginInit(); img.UriSource = new Uri(path);
-            img.CacheOption = BitmapCacheOption.OnLoad; img.EndInit();
+            img.CacheOption = BitmapCacheOption.OnLoad; img.EndInit(); img.Freeze();
             System.Windows.Clipboard.SetImage(img);
         }
         catch { }
     }
 
-    // The context menu lives in the item DataTemplate; the clicked tile is the menu's DataContext
-    // (right-clicking a tile doesn't select it in the ListBox, so don't rely on Grid.SelectedItem).
+    // ===== Hover-play GIFs in the grid (one at a time) =====
+
+    private async void Tile_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not Tile tile) return;
+        if (!tile.IsGif) return;
+        var img = FindTileImage(fe);
+        if (img == null) return;
+
+        // Mark hover intent, then decode the GIF OFF the UI thread (RenderTargetBitmap per frame is
+        // heavy and would jank the hover). A fast leave / move to another tile cancels via the
+        // intent check below.
+        StopHover();
+        _hoverTile = tile; _hoverImage = img;
+        var loadFor = tile;
+        var clip = await Task.Run(() => GifAnimator.Load(loadFor.Path));
+        if (!ReferenceEquals(_hoverTile, loadFor) || !ReferenceEquals(_hoverImage, img) ||
+            !ReferenceEquals(img.DataContext, loadFor))
+            return; // pointer already moved away or the container was recycled while decoding
+        if (clip == null || clip.Frames.Count == 0) { StopHover(); return; }
+        _hoverClip = clip; _hoverFrame = 0;
+        img.Source = clip.Frames[0];
+        if (clip.Frames.Count > 1)
+        {
+            _hoverTimer.Interval = TimeSpan.FromMilliseconds(clip.DelaysMs[0]);
+            _hoverTimer.Start();
+        }
+    }
+
+    private void Tile_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.DataContext is Tile tile && ReferenceEquals(tile, _hoverTile))
+            StopHover();
+    }
+
+    private void AdvanceHover(object? sender, EventArgs e)
+    {
+        // Stop if the container was recycled to a different tile — virtualization can swap the
+        // element's DataContext without firing MouseLeave, which would leak the timer and paint
+        // the old GIF's frames onto a now-different tile.
+        if (_hoverClip == null || _hoverImage == null || !ReferenceEquals(_hoverImage.DataContext, _hoverTile))
+        { StopHover(); return; }
+        _hoverFrame = (_hoverFrame + 1) % _hoverClip.Frames.Count;
+        _hoverImage.Source = _hoverClip.Frames[_hoverFrame];
+        _hoverTimer.Interval = TimeSpan.FromMilliseconds(_hoverClip.DelaysMs[_hoverFrame]);
+    }
+
+    private void StopHover()
+    {
+        _hoverTimer.Stop();
+        // Re-attach the Thumb binding we overrode with a local frame, so the element again tracks
+        // whatever tile it currently holds (correct even if virtualization recycled it onto a
+        // different tile while we were animating).
+        if (_hoverImage != null)
+            _hoverImage.SetBinding(System.Windows.Controls.Image.SourceProperty,
+                new System.Windows.Data.Binding(nameof(Tile.Thumb)));
+        _hoverClip = null; _hoverImage = null; _hoverTile = null; _hoverFrame = 0;
+    }
+
+    private static System.Windows.Controls.Image? FindTileImage(DependencyObject root)
+    {
+        if (root is System.Windows.Controls.Image img && img.Name == "TileImage") return img;
+        int n = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < n; i++)
+        {
+            var found = FindTileImage(VisualTreeHelper.GetChild(root, i));
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    // ===== Drag OUT =====
+
+    private void Grid_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _pressOrigin = e.GetPosition(this);
+        _maybeDrag = TileAt(e.OriginalSource) != null;
+    }
+
+    private void Grid_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (!_maybeDrag || _dragging || e.LeftButton != MouseButtonState.Pressed) return;
+        var p = e.GetPosition(this);
+        if (Math.Abs(p.X - _pressOrigin.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(p.Y - _pressOrigin.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+        if (TileAt(e.OriginalSource) is not { } tile || !File.Exists(tile.Path)) { _maybeDrag = false; return; }
+
+        _dragging = true;
+        try
+        {
+            var data = new System.Windows.DataObject(System.Windows.DataFormats.FileDrop, new[] { tile.Path });
+            System.Windows.DragDrop.DoDragDrop(Grid, data, System.Windows.DragDropEffects.Copy);
+        }
+        catch { }
+        finally { _dragging = false; _maybeDrag = false; }
+    }
+
+    // The tile under an event's original source (walks up the tree), or null. Uses the logical
+    // parent so non-visual content elements (TextBlock Runs) don't trip VisualTreeHelper.
+    private static Tile? TileAt(object? source)
+    {
+        var d = source as DependencyObject;
+        while (d != null)
+        {
+            if (d is FrameworkElement fe && fe.DataContext is Tile t) return t;
+            d = (d is Visual or System.Windows.Media.Media3D.Visual3D) ? VisualTreeHelper.GetParent(d)
+                : LogicalTreeHelper.GetParent(d);
+        }
+        return null;
+    }
+
+    // ===== Drop IN =====
+
+    private void Window_DragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        e.Effects = HasDroppableFiles(e) ? System.Windows.DragDropEffects.Copy : System.Windows.DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private static bool HasDroppableFiles(System.Windows.DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop)) return false;
+        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] files) return false;
+        return files.Any(f => DropExts.Contains(Path.GetExtension(f).ToLowerInvariant()));
+    }
+
+    private async void Window_Drop(object sender, System.Windows.DragEventArgs e)
+    {
+        if (!HasDroppableFiles(e)) return;
+        var files = (string[])e.Data.GetData(System.Windows.DataFormats.FileDrop)!;
+        bool added = false;
+        foreach (var src in files.Where(f => DropExts.Contains(Path.GetExtension(f).ToLowerInvariant())))
+        {
+            try
+            {
+                if (!File.Exists(src)) continue;
+                Directory.CreateDirectory(_saveFolder);
+                var dest = NonCollidingPath(_saveFolder, Path.GetFileName(src));
+                // Defense-in-depth: never let a crafted name escape the save folder.
+                if (!Path.GetFullPath(dest).StartsWith(
+                        Path.GetFullPath(_saveFolder), StringComparison.OrdinalIgnoreCase)) continue;
+                File.Copy(src, dest);
+                _lib.Add(dest, DateTime.Now);
+                if (_enableOcr) await _indexer.EnqueueAsync(dest);
+                added = true;
+            }
+            catch { /* skip files we can't import */ }
+        }
+        if (added) Refresh();
+    }
+
+    // Append " (n)" before the extension until the path is free, so an import never overwrites.
+    private static string NonCollidingPath(string folder, string fileName)
+    {
+        var dest = Path.Combine(folder, fileName);
+        if (!File.Exists(dest)) return dest;
+        var name = Path.GetFileNameWithoutExtension(fileName);
+        var ext = Path.GetExtension(fileName);
+        for (int i = 2; ; i++)
+        {
+            dest = Path.Combine(folder, $"{name} ({i}){ext}");
+            if (!File.Exists(dest)) return dest;
+        }
+    }
+
+    // ===== Re-annotate (save as NEW file, non-destructive) =====
+
+    private void EditCurrent()
+    {
+        if (_detailIndex < 0 || _detailIndex >= _filtered.Count) return;
+        EditTile(_filtered[_detailIndex]);
+    }
+
+    private void EditTile(Tile tile)
+    {
+        if (_reannotateSave == null || !tile.IsImage || !File.Exists(tile.Path)) return;
+        BitmapSource source;
+        try
+        {
+            var bi = new BitmapImage();
+            bi.BeginInit(); bi.UriSource = new Uri(tile.Path);
+            bi.CacheOption = BitmapCacheOption.OnLoad; bi.EndInit(); bi.Freeze();
+            source = bi;
+        }
+        catch { return; }
+
+        var editor = new Aquashot.Editor.AnnotationEditorWindow(source, flattened =>
+        {
+            try
+            {
+                if (flattened.CanFreeze && !flattened.IsFrozen) flattened.Freeze();
+                var saved = _reannotateSave(flattened); // persists + library.Add + OCR enqueue (TrayHost)
+                Refresh();
+                OpenDetailFor(saved);
+            }
+            catch { }
+        });
+        editor.Owner = this;
+        editor.Show();
+    }
+
+    // ===== Context menu (item DataTemplate; clicked tile is the menu's DataContext) =====
+
     private static Tile? TileOf(object sender) => (sender as FrameworkElement)?.DataContext as Tile;
 
     private void Open_Click(object sender, RoutedEventArgs e)
@@ -196,19 +566,14 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         if (TileOf(sender) is { } t) OpenDetailFor(t.Path);
     }
 
+    private void Edit_Click(object sender, RoutedEventArgs e)
+    {
+        if (TileOf(sender) is { } t) EditTile(t);
+    }
+
     private void Copy_Click(object sender, RoutedEventArgs e)
     {
-        if (TileOf(sender) is { } t && File.Exists(t.Path))
-        {
-            try
-            {
-                var img = new BitmapImage();
-                img.BeginInit(); img.UriSource = new Uri(t.Path);
-                img.CacheOption = BitmapCacheOption.OnLoad; img.EndInit();
-                System.Windows.Clipboard.SetImage(img);
-            }
-            catch { }
-        }
+        if (TileOf(sender) is { } t && File.Exists(t.Path)) CopyImageToClipboard(t.Path);
     }
 
     private void Reveal_Click(object sender, RoutedEventArgs e)
@@ -224,6 +589,6 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
             MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (ok != MessageBoxResult.Yes) return;
         try { if (File.Exists(t.Path)) File.Delete(t.Path); } catch { }
-        Refresh(SearchBox.Text);
+        Refresh();
     }
 }
