@@ -67,6 +67,25 @@ public partial class OcrTextOverlay : System.Windows.Controls.UserControl
         }
     }
 
+    // Play a PRE-DECODED clip (frames decoded off the UI thread by the caller) — avoids the
+    // synchronous GifAnimator.Load freeze when stepping onto a GIF in the detail view.
+    public void SetAnimatedClip(GifAnimator.Clip clip)
+    {
+        StopGif();
+        _lines = Array.Empty<OcrLine>();
+        _srcW = _srcH = 0;
+        TextCanvas.Children.Clear();
+        _gif = clip;
+        _gifIndex = 0;
+        _image = clip.Frames[0];
+        Img.Source = clip.Frames[0];
+        if (clip.Frames.Count > 1)
+        {
+            _gifTimer.Interval = TimeSpan.FromMilliseconds(clip.DelaysMs[0]);
+            _gifTimer.Start();
+        }
+    }
+
     private void AdvanceGif(object? sender, EventArgs e)
     {
         if (_gif == null) { StopGif(); return; }

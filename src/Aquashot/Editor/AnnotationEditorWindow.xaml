@@ -9,6 +9,8 @@
         <!-- Image area: the source is centred and fit-scaled (Uniform); the drawing layer
              is aligned exactly over it via a ScaleTransform so clicks map to image pixels. -->
         <Grid x:Name="ImageHost" ClipToBounds="True">
+            <!-- The source image (AnnotationLayer draws only the annotations on top of it). -->
+            <Image x:Name="SourceImage" Stretch="Uniform"/>
             <Canvas x:Name="Overlay" Background="Transparent"
                     MouseLeftButtonDown="OnMouseDown"
                     MouseMove="OnMouseMove"

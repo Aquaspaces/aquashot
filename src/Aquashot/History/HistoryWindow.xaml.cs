@@ -237,7 +237,7 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         // Instant feedback: show the already-decoded thumbnail now so every arrow press updates the
         // view immediately. The full-res image (~120ms) and the OCR overlay (~350ms) fill in after
         // the user settles, and are skipped entirely while stepping fast.
-        if (!tile.IsGif && tile.Thumb != null) Overlay.SetImage(tile.Thumb);
+        if (tile.Thumb != null) Overlay.SetImage(tile.Thumb);
 
         _detailTimer.Stop(); _detailTimer.Start();
         _ocrTimer.Stop(); _ocrTimer.Start();
@@ -253,7 +253,11 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
 
         if (tile.IsGif)
         {
-            Overlay.SetAnimatedGif(tile.Path); // animate instead of a frozen first frame
+            var gpath = tile.Path;
+            var clip = await Task.Run(() => GifAnimator.Load(gpath)); // decode frames off the UI thread
+            if (_detailIndex != index) return; // stepped away; drop this stale GIF
+            if (clip != null && clip.Frames.Count > 0) Overlay.SetAnimatedClip(clip);
+            else Overlay.SetImage(DecodeForDisplay(gpath));
         }
         else
         {

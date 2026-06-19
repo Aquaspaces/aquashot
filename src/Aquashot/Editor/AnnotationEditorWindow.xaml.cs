@@ -47,6 +47,7 @@ public partial class AnnotationEditorWindow : Window
         InitializeComponent();
         _source = source;
         _onSave = onSave;
+        SourceImage.Source = source; // AnnotationRenderer.Draw ignores its source arg, so show the image here
 
         // Drawing surface sized to the IMAGE in pixels; a ScaleTransform fits it to the view,
         // so shapes are authored in image-pixel space (same model as the capture overlay).
