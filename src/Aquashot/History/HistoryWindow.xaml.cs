@@ -65,6 +65,12 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
     private readonly DispatcherTimer _searchTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
     private readonly DispatcherTimer _detailTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
 
+    // OCR is far heavier than the image decode (full-image read + decode + engine pass), so it gets
+    // its own LONGER debounce and a per-file cache — rapid arrow-stepping then never triggers an OCR
+    // pass (that per-step OCR was the real source of the lag).
+    private readonly DispatcherTimer _ocrTimer = new() { Interval = TimeSpan.FromMilliseconds(350) };
+    private readonly Dictionary<string, IReadOnlyList<OcrLine>> _ocrCache = new(StringComparer.OrdinalIgnoreCase);
+
     // Generation token so a stale async thumbnail decode can't overwrite a fresher Refresh.
     private int _refreshGen;
 
@@ -133,6 +139,7 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         PreviewKeyDown += OnKey;
 
         _detailTimer.Tick += (_, __) => { _detailTimer.Stop(); LoadDetailHeavy(); };
+        _ocrTimer.Tick += (_, __) => { _ocrTimer.Stop(); LoadOcr(); };
         _hoverTimer.Tick += AdvanceHover;
 
         // Drop-in support.
@@ -223,8 +230,13 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         BtnEdit.IsEnabled = tile.IsImage && _reannotateSave != null;
         SyncFilmstripSelection();
 
-        _detailTimer.Stop();
-        _detailTimer.Start();
+        // Instant feedback: show the already-decoded thumbnail now so every arrow press updates the
+        // view immediately. The full-res image (~120ms) and the OCR overlay (~350ms) fill in after
+        // the user settles, and are skipped entirely while stepping fast.
+        if (!tile.IsGif && tile.Thumb != null) Overlay.SetImage(tile.Thumb);
+
+        _detailTimer.Stop(); _detailTimer.Start();
+        _ocrTimer.Stop(); _ocrTimer.Start();
     }
 
     // Runs ~120ms after the user settles on an index. Decodes off the UI thread and guards by the
@@ -255,14 +267,26 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
             });
             if (_detailIndex != index) return; // user already stepped away; drop this stale image
             Overlay.SetImage(full);
+            // SetImage clears the overlay; re-apply OCR lines if we already cached them (the OCR
+            // debounce may have populated them before this slower full-res decode finished).
+            if (_ocrCache.TryGetValue(path, out var lines)) Overlay.SetLines(lines);
         }
-
-        LoadLines(tile.Path, index);
     }
 
-    private async void LoadLines(string path, int index)
+    // Runs only after the OCR settle (~350ms) on the landed image, and caches per file, so browsing
+    // never pays for OCR. Cached hits are instant; first-time recognition runs once off the engine.
+    private async void LoadOcr()
     {
+        int index = _detailIndex;
+        if (index < 0 || index >= _filtered.Count) return;
+        var tile = _filtered[index];
+        if (tile.IsGif) return; // GIFs aren't text-indexed in the detail overlay
+        var path = tile.Path;
+
+        if (_ocrCache.TryGetValue(path, out var cached)) { Overlay.SetLines(cached); return; }
+
         var lines = await _ocr.RecognizeLinesAsync(path);
+        _ocrCache[path] = lines;
         if (_detailIndex == index && index >= 0 && index < _filtered.Count &&
             string.Equals(_filtered[index].Path, path, StringComparison.OrdinalIgnoreCase))
             Overlay.SetLines(lines);
@@ -277,6 +301,7 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
     private void CloseDetail()
     {
         _detailTimer.Stop();
+        _ocrTimer.Stop();
         DetailPanel.Visibility = Visibility.Collapsed;
         Grid.Visibility = Visibility.Visible;
         _detailIndex = -1;

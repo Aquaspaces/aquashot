@@ -67,26 +67,28 @@ public class OutputService
         return MetadataStripper.Strip(ms.ToArray());
     }
 
-    // The Windows clipboard can be transiently locked by another process; retry a few times.
+    // The Windows clipboard can be transiently locked by another process; retry a few times, then
+    // give up quietly — copying is best-effort and must never throw out of a save (a hard clipboard
+    // failure should not crash the app or abandon the written file).
     private static void SetClipboardImage(BitmapSource image)
     {
-        for (int attempt = 0; ; attempt++)
+        for (int attempt = 0; attempt < 9; attempt++)
         {
             try { Clipboard.SetImage(image); return; }
-            catch (ExternalException) when (attempt < 8) { Thread.Sleep(60); }
+            catch (ExternalException) { if (attempt == 8) return; Thread.Sleep(60); }
         }
     }
 
     // Copy plain text (the saved file path) to the clipboard, with the same retry loop.
     private static void SetClipboardText(string text) => CopyPathToClipboard(text);
 
-    // Copy a file path as plain text to the clipboard (reusable by recordings), with a retry loop.
+    // Copy a file path as plain text to the clipboard (reusable by recordings); best-effort.
     public static void CopyPathToClipboard(string path)
     {
-        for (int attempt = 0; ; attempt++)
+        for (int attempt = 0; attempt < 9; attempt++)
         {
             try { Clipboard.SetText(path); return; }
-            catch (ExternalException) when (attempt < 8) { Thread.Sleep(60); }
+            catch (ExternalException) { if (attempt == 8) return; Thread.Sleep(60); }
         }
     }
 
@@ -123,10 +125,10 @@ public class OutputService
     public static void CopyFileToClipboard(string path)
     {
         var paths = new System.Collections.Specialized.StringCollection { path };
-        for (int attempt = 0; ; attempt++)
+        for (int attempt = 0; attempt < 9; attempt++)
         {
             try { Clipboard.SetFileDropList(paths); return; }
-            catch (ExternalException) when (attempt < 8) { Thread.Sleep(60); }
+            catch (ExternalException) { if (attempt == 8) return; Thread.Sleep(60); }
         }
     }
 }
