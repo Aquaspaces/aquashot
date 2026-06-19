@@ -71,3 +71,15 @@ jobs:
 
             > These binaries bundle a GPL FFmpeg build and are therefore distributed under the GPL.
             > Aquashot's own source remains WTFPL. See THIRD-PARTY-NOTICES.md.
+
+      # Submit the new version to winget as a step here (not via an on:release workflow): releases
+      # created by GITHUB_TOKEN don't fire the `release` event, so a release-triggered workflow
+      # never runs. This opens an update PR against microsoft/winget-pkgs for the Setup installer.
+      - name: Publish to winget
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
+        with:
+          identifier: Aquashot.Aquashot
+          installers-regex: '-Setup\.exe$'   # the Inno installer only, not the portable exe
+          release-tag: ${{ github.ref_name }}
+          token: ${{ secrets.WINGET_TOKEN }}

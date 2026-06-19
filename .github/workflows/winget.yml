@@ -20,7 +20,7 @@ jobs:
       # Bump deliberately via Dependabot/Renovate. 4ffc788 == v2 (2024-11-27).
       - uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
         with:
-          identifier: Aquaspaces.Aquashot
+          identifier: Aquashot.Aquashot
           installers-regex: '-Setup\.exe$'   # the Inno installer only, not the portable exe
           release-tag: ${{ github.event.inputs.tag || github.ref_name }}
           token: ${{ secrets.WINGET_TOKEN }}
