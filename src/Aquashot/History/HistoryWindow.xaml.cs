@@ -69,7 +69,10 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
     // its own LONGER debounce and a per-file cache — rapid arrow-stepping then never triggers an OCR
     // pass (that per-step OCR was the real source of the lag).
     private readonly DispatcherTimer _ocrTimer = new() { Interval = TimeSpan.FromMilliseconds(350) };
-    private readonly Dictionary<string, IReadOnlyList<OcrLine>> _ocrCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, OcrCacheItem> _ocrCache = new(StringComparer.OrdinalIgnoreCase);
+    private sealed record OcrCacheItem(IReadOnlyList<OcrLine> Lines, double SrcW, double SrcH);
+    // Cap the detail-view decode width for speed on 4K screenshots; OCR maps with the TRUE source size.
+    private const int DetailDecodeCap = 2560;
 
     // Generation token so a stale async thumbnail decode can't overwrite a fresher Refresh.
     private int _refreshGen;
@@ -136,6 +139,7 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         BtnCopyText.Click += (_, __) => CopyAllText();
         BtnCopyImage.Click += (_, __) => CopyCurrentImage();
         BtnEdit.Click += (_, __) => EditCurrent();
+        ShowTextCheck.Click += (_, __) => Overlay.SetTextVisible(ShowTextCheck.IsChecked == true);
         PreviewKeyDown += OnKey;
 
         _detailTimer.Tick += (_, __) => { _detailTimer.Stop(); LoadDetailHeavy(); };
@@ -254,23 +258,42 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         else
         {
             var path = tile.Path;
-            var full = await Task.Run(() =>
-            {
-                try
-                {
-                    var bi = new BitmapImage();
-                    bi.BeginInit(); bi.UriSource = new Uri(path);
-                    bi.CacheOption = BitmapCacheOption.OnLoad; bi.EndInit(); bi.Freeze();
-                    return (BitmapSource?)bi;
-                }
-                catch { return null; }
-            });
+            var full = await Task.Run(() => DecodeForDisplay(path));
             if (_detailIndex != index) return; // user already stepped away; drop this stale image
             Overlay.SetImage(full);
-            // SetImage clears the overlay; re-apply OCR lines if we already cached them (the OCR
-            // debounce may have populated them before this slower full-res decode finished).
-            if (_ocrCache.TryGetValue(path, out var lines)) Overlay.SetLines(lines);
+            // SetImage clears the overlay; re-apply cached OCR lines, mapped with the TRUE source
+            // dims so they line up even though the displayed bitmap is downscaled.
+            if (_ocrCache.TryGetValue(path, out var oc)) Overlay.SetLines(oc.Lines, oc.SrcW, oc.SrcH);
         }
+    }
+
+    // Decode the detail image capped to DetailDecodeCap px wide (a big speedup on 4K screenshots).
+    // OCR alignment is unaffected because the overlay maps boxes with the true source dimensions.
+    private static BitmapSource? DecodeForDisplay(string path)
+    {
+        try
+        {
+            int srcW = SourcePixelSize(path).w is var w && w > 0 ? (int)w : 0;
+            var bi = new BitmapImage();
+            bi.BeginInit(); bi.UriSource = new Uri(path);
+            if (srcW > DetailDecodeCap) bi.DecodePixelWidth = DetailDecodeCap;
+            bi.CacheOption = BitmapCacheOption.OnLoad; bi.EndInit(); bi.Freeze();
+            return bi;
+        }
+        catch { return null; }
+    }
+
+    // Header-only read of the source pixel dimensions (the coordinate space of the OCR boxes).
+    private static (double w, double h) SourcePixelSize(string path)
+    {
+        try
+        {
+            var dec = BitmapDecoder.Create(new Uri(path),
+                BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+            var f = dec.Frames[0];
+            return (f.PixelWidth, f.PixelHeight);
+        }
+        catch { return (0, 0); }
     }
 
     // Runs only after the OCR settle (~350ms) on the landed image, and caches per file, so browsing
@@ -283,13 +306,16 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         if (tile.IsGif) return; // GIFs aren't text-indexed in the detail overlay
         var path = tile.Path;
 
-        if (_ocrCache.TryGetValue(path, out var cached)) { Overlay.SetLines(cached); return; }
+        if (_ocrCache.TryGetValue(path, out var cached))
+        { Overlay.SetLines(cached.Lines, cached.SrcW, cached.SrcH); return; }
 
         var lines = await _ocr.RecognizeLinesAsync(path);
-        _ocrCache[path] = lines;
+        var (sw, sh) = await Task.Run(() => SourcePixelSize(path)); // OCR coordinate space (full-res)
+        var item = new OcrCacheItem(lines, sw, sh);
+        _ocrCache[path] = item;
         if (_detailIndex == index && index >= 0 && index < _filtered.Count &&
             string.Equals(_filtered[index].Path, path, StringComparison.OrdinalIgnoreCase))
-            Overlay.SetLines(lines);
+            Overlay.SetLines(item.Lines, item.SrcW, item.SrcH);
     }
 
     private void StepDetail(int delta)

@@ -87,6 +87,9 @@
                   ToolTip="Annotate a copy (saved as a new file)"/>
           <Button x:Name="BtnCopyText" Content="Copy all text" DockPanel.Dock="Right" Margin="4,0"/>
           <Button x:Name="BtnCopyImage" Content="Copy image" DockPanel.Dock="Right" Margin="4,0"/>
+          <CheckBox x:Name="ShowTextCheck" Content="Text overlay" DockPanel.Dock="Right"
+                    Margin="8,0,4,0" VerticalAlignment="Center" Foreground="{StaticResource B.Text}"
+                    ToolTip="Show the recognized text on top of the image"/>
           <TextBlock x:Name="DetailTitle" VerticalAlignment="Center" Margin="8,0"
                      Foreground="{StaticResource B.Text}" TextTrimming="CharacterEllipsis"/>
         </DockPanel>
