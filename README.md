@@ -82,9 +82,9 @@ Scrolling capture · built-in upload/share · fullscreen / per-monitor one-shot 
 
 Cross platform support, this tool is highly designed with Windows 10/11 in mind. Tested only on Windows 11, but 10 should work.
 
-## Vibe Coding Disclosure
+## GenAI Disclosure
 
-This software is entirely vibe coded/AI assisted (as of 2026-06-16). I can't promise it's
+This software is almost entirely AI generated (as of 2026-06-25). I can't promise it's
 free of bugs, security vulnerabilities, or other major issues, and I'm not
 responsible for any problems you run into using it. Read the code before
 trusting it in sensitive contexts.
