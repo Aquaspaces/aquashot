@@ -719,7 +719,7 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         }
         catch { return; }
 
-        var editor = new Aquashot.Editor.AnnotationEditorWindow(source, _settings, _enableOcr ? _ocr : null, flattened =>
+        var editor = new Aquashot.Editor.AnnotationEditorWindow(source, _settings, _ocr, flattened =>
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 // The save callback updates the Windows clipboard and tray menu, both bound to

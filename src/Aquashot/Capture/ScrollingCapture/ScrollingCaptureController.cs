@@ -24,7 +24,7 @@ public sealed class ScrollingCaptureController
 {
     private readonly GraphicsCaptureService _capture;
     private readonly AppSettings _settings;
-    private readonly Func<BitmapSource, string> _save; // returns the saved file path
+    private readonly Func<BitmapSource, Task<string>> _save; // returns the saved file path
 
     // Cancellation source for one run: cancelled by the progress toast or the global Esc hook (both
     // from arbitrary threads — CTS.Cancel is thread-safe), and observed by the loop and Task.Delay so
@@ -33,7 +33,7 @@ public sealed class ScrollingCaptureController
     private bool IsCancelled => _cts?.IsCancellationRequested == true;
 
     public ScrollingCaptureController(GraphicsCaptureService capture, AppSettings settings,
-        Func<BitmapSource, string> save)
+        Func<BitmapSource, Task<string>> save)
     {
         _capture = capture;
         _settings = settings;
@@ -83,7 +83,7 @@ public sealed class ScrollingCaptureController
         if (frameCount == 0) return new ScrollCaptureResult(ScrollResultKind.NothingCaptured);
 
         // 3) Save the assembled image (even a single frame is a valid result).
-        var path = _save(tall);
+        var path = await _save(tall);
         return new ScrollCaptureResult(ScrollResultKind.Saved, path, frameCount);
     }
 

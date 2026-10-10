@@ -17,14 +17,14 @@ public class OutputService
 {
     private readonly AnnotationRenderer _renderer = new();
 
-    public BitmapSource Compose(CapturedFrame frame, PixelRect cropVirtual, AnnotationDocument doc)
-    {
-        var localCrop = new PixelRect(
-            cropVirtual.X - frame.Monitor.Bounds.X,
-            cropVirtual.Y - frame.Monitor.Bounds.Y,
-            cropVirtual.Width, cropVirtual.Height);
-        return _renderer.Flatten(frame.Bitmap, localCrop, doc.Shapes);
-    }
+    public BitmapSource Compose(CapturedFrame frame, PixelRect cropVirtual, AnnotationDocument doc) =>
+        _renderer.Flatten(frame.Bitmap, LocalCrop(frame, cropVirtual), doc.Shapes);
+
+    // A virtual-desktop selection expressed in the pixels of the frame's monitor bitmap.
+    public static PixelRect LocalCrop(CapturedFrame frame, PixelRect cropVirtual) => new(
+        cropVirtual.X - frame.Monitor.Bounds.X,
+        cropVirtual.Y - frame.Monitor.Bounds.Y,
+        cropVirtual.Width, cropVirtual.Height);
 
     public string Save(CapturedFrame frame, PixelRect cropVirtual, AnnotationDocument doc,
         AppSettings settings, DateTime now, ClipboardMode clip = ClipboardMode.Image,
@@ -37,7 +37,16 @@ public class OutputService
         ClipboardMode clip = ClipboardMode.Image, string? windowTitle = null, string? appName = null)
     {
         if (image.CanFreeze && !image.IsFrozen) image.Freeze();
+        var file = WriteUnique(image, settings, now, windowTitle, appName);
+        ApplyClipboard(image, file, clip);
+        return file;
+    }
 
+    // Encode and write to a new file, never replacing an existing one (numeric suffix on collision).
+    // Safe off the UI thread for a frozen image.
+    public string WriteUnique(BitmapSource image, AppSettings settings, DateTime now,
+        string? windowTitle = null, string? appName = null)
+    {
         Directory.CreateDirectory(settings.SaveFolder);
         string file = Path.Combine(settings.SaveFolder,
             FilenameGenerator.Generate(settings.FilenamePattern, settings.ImageFormat, now, windowTitle, appName));
@@ -54,10 +63,14 @@ public class OutputService
                 continue;
             }
             using (stream) stream.Write(bytes);
-            break;
+            return file;
         }
+    }
 
-        // Apply the clipboard action after the file is written so Path mode can copy the path.
+    // Apply the clipboard action after the file is written so Path mode can copy the path.
+    // Must run on the UI (STA) thread.
+    public void ApplyClipboard(BitmapSource image, string file, ClipboardMode clip)
+    {
         switch (clip)
         {
             case ClipboardMode.Image: SetClipboardImage(image); break;
@@ -65,7 +78,6 @@ public class OutputService
             case ClipboardMode.Path: SetClipboardText(file); break;
             case ClipboardMode.None: break;
         }
-        return file;
     }
 
     // Encodes to PNG/JPEG with no carried-over metadata (null thumbnail/metadata/colour
