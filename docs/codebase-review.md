@@ -28,22 +28,32 @@ correct output, and usable settings. No application dependencies were added.
 | P2 | The `.slnx` solution failed with the .NET 8 SDK configured in CI. It is replaced by `.sln`. Release builds now test before packaging and manual releases use the resolved version tag. | `Aquashot.sln`, `.github/workflows/release.yml` |
 | P3 | Share markup failed to escape filenames/URLs and uploads buffered entire files. Markup is escaped and uploads stream from disk. | `Share/ShareService.cs`, uploaders |
 
-## Remaining findings
+## Second pass — 2026-10-10
 
-These are known limitations found in the review, not completed fixes.
+The remaining findings from the first pass, all resolved.
 
-1. **P1 — Automatic redaction does not cover every capture path.** The automatic OCR step lives in the normal region/window confirmation callback in `Tray/TrayHost.cs`. All-monitor, repeat, delayed, and scrolling saves bypass it, and disabling OCR also bypasses it. Unify the save pipeline before describing automatic redaction as applying to every capture. OCR matching itself still requires visual verification.
-2. **P2 — Undo does not reverse moves, deletion, or crop.** `Annotation/AnnotationDocument.cs` uses a stack of added shapes; `MoveAt`, `RemoveAt`, and replacement/crop operations do not preserve prior document/image state. Add operation-level history before promising full undo.
-3. **P2 — Secondary-monitor pin placement uses local coordinates.** `Overlay/OverlayWindow.xaml.cs` passes monitor-local DIP coordinates to the pin window's absolute position. Position the native window in virtual-desktop pixels and verify monitors left/above the primary and mixed scales.
-4. **P2 — Tiny selections at monitor edges can exceed bounds.** `OverlayWindow.ClampToMonitor` applies a minimum size after clipping. Clamp the resulting size and origin together, then exercise selection/resize at all four corners.
-5. **P2 — MP4 detail view has no video renderer.** `HistoryWindow.LoadDetailHeavy` uses a bitmap loader for non-GIF files. The gallery can therefore show a blank detail area for MP4; opening the file externally remains the available playback route.
-6. **P2 — Some optimized GIF previews composite incorrectly.** `History/GifAnimator.cs` paints transparent pixels over old content for disposal mode 2 and approximates mode 3 by keeping the frame. Implement actual background restoration and prior-frame restoration with fixture GIFs.
-7. **P2 — Early recording-process failures surface only when stopped.** A failed encoder/device can leave the UI timer running. Add a process-completion signal to the capture session and connect it to the recording UI; GDI capture return values also need explicit failure diagnostics.
-8. **P3 — FFmpeg builds are not reproducible.** `scripts/fetch-ffmpeg.ps1` downloads the mutable latest build without a pinned version/digest. Pin and verify the binary used for releases and retain its source/license provenance.
+| Priority | Finding and resulting behavior | Main implementation |
+| --- | --- | --- |
+| P1 | Automatic redaction covered only region/window captures, and turning off text indexing turned it off. Every still capture (region, window, monitor, all monitors, repeat, delayed, scrolling) now goes through one pipeline: redact, flatten, write, clipboard, then history, indexing, and auto-share. Redaction is independent of indexing. If redaction fails, nothing is saved. Encoding runs off the UI thread. | `Output/CapturePipeline.cs`, `Tray/TrayHost.cs` |
+| P2 | Undo did not reverse moves, deletion, spotlight replacement, or crop. The document records a snapshot before each edit; a drag is one step, and the editor's crop stores its bitmap in the snapshot. Region resizes re-base history so undo keeps shapes in place. | `Annotation/AnnotationDocument.cs`, editor/overlay windows |
+| P2 | Pins from a secondary monitor used monitor-local DIPs as absolute coordinates. The native window is now placed in virtual-desktop pixels before it is shown. | `Pin/PinWindow.xaml.cs` |
+| P2 | Tiny selections at monitor edges could exceed bounds. The minimum size now grows inward within the monitor. | `Selection/SelectionEngine.ClampWithMinSize` |
+| P2 | MP4s showed a blank detail view. They now play in a `MediaElement` (looping, click to pause); the poster frame stays if playback can't start. | `History/HistoryWindow.xaml(.cs)` |
+| P2 | GIF disposal 2 and 3 composited incorrectly. A tested BGRA compositor implements clear-to-transparent and restore-previous. | `History/GifCompositor.cs`, `History/GifAnimator.cs` |
+| P2 | FFmpeg failing mid-recording surfaced only on Stop. Sessions expose `Exited`; the overlay stops at once and the tray shows FFmpeg's error. A failed output reservation no longer orphans the temp capture. | `Capture/FFmpegRunner.cs`, `Recording/RecordingController.cs`, `Overlay/OverlayWindow.xaml.cs` |
+| P3 | FFmpeg builds were not reproducible. The fetch script pins gyan.dev 9.0.2 essentials by version and SHA-256 and records provenance. | `scripts/fetch-ffmpeg.ps1`, `THIRD-PARTY-NOTICES.md` |
+
+Still open: GDI capture return values are not checked explicitly, and the pin, MP4
+playback, and secondary-monitor placement have not been exercised on a live
+multi-monitor desktop.
 
 ## Validation
 
-All 326 Release solution tests pass on Windows with .NET SDK 8.0.425, using
+Second pass: all 354 Release tests pass with .NET SDK 8.0.425. A live gdigrab
+recording through `RecordingController` with the pinned FFmpeg produced a valid MP4
+and GIF, and a failing FFmpeg process completed `Exited` immediately.
+
+First pass: all 326 Release solution tests pass on Windows with .NET SDK 8.0.425, using
 `dotnet test Aquashot.sln --configuration Release --verbosity minimal`. Tests cover
 regression cases for saving, hotkeys, rendering, OCR errors, recording arguments and
 process lifecycle, size planning, persistence, and window construction/layout.

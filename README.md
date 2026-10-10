@@ -86,7 +86,7 @@ tests/Aquashot.Tests/
 ## Review and remaining work
 
 See [the codebase review](docs/codebase-review.md) for implemented fixes, validation,
-and remaining issues, including undo coverage, media previews, and mixed-DPI positioning.
+and what is still unverified on live multi-monitor setups.
 
 ## Not planned
 
