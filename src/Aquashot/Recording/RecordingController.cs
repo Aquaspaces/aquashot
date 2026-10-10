@@ -65,6 +65,13 @@ public class RecordingController
     // result (null on error), error (null on success)
     public event Action<RecordResult?, string?>? Finished;
 
+    // Fired on a pool thread when FFmpeg exits by itself while recording (a device or encoder
+    // failed). The host should stop the recording; the stop path then reports FFmpeg's error.
+    public event Action? CaptureEnded;
+
+    // True once FFmpeg exited before the recording was stopped.
+    public bool CaptureEndedEarly { get; private set; }
+
     // Fired when the (slow) background encode begins — lets the host free its busy flag and
     // show an "Encoding…" notice while the user can already start another capture.
     public event Action? EncodingStarted;
@@ -125,6 +132,7 @@ public class RecordingController
         _overlayPng = overlayPng;
         _stopping = false;
         _audioWarning = null;
+        CaptureEndedEarly = false;
 
         try
         {
@@ -142,9 +150,11 @@ public class RecordingController
             _pause.Start(0);
             _pausedAccumSec = 0;
             Keep = null;
-            _session = _runner!.StartCapture(
+            var session = _runner!.StartCapture(
                 FFmpegArgs.CaptureGdigrab(region, _settings.RecordFps, encoder, _intermediate, audio));
+            _session = session;
             _clock.Restart();
+            _ = WatchSessionAsync(session);
             return null;
         }
         catch (Exception ex)
@@ -152,6 +162,15 @@ public class RecordingController
             Cleanup();
             return "Recording could not start: " + ex.Message;
         }
+    }
+
+    private async Task WatchSessionAsync(IFFmpegSession session)
+    {
+        try { await session.Exited.ConfigureAwait(false); }
+        catch { /* the process handle went away; treat it as exited */ }
+        if (_stopping || !ReferenceEquals(_session, session)) return;
+        CaptureEndedEarly = true;
+        CaptureEnded?.Invoke();
     }
 
     // Toggle pause/resume. gdigrab keeps running; we only record the paused span (dropped at encode)
@@ -241,8 +260,16 @@ public class RecordingController
         var exts = new List<string>();
         if (_formats.HasFlag(RecordFormats.Mp4)) exts.Add(".mp4");
         if (_formats.HasFlag(RecordFormats.Gif)) exts.Add(".gif");
-        _outBase = OutputService.ReserveRecordingOutputBase(_settings, DateTime.Now,
-            out _outputReservation, exts.ToArray());
+        try
+        {
+            _outBase = OutputService.ReserveRecordingOutputBase(_settings, DateTime.Now,
+                out _outputReservation, exts.ToArray());
+        }
+        catch
+        {
+            Cleanup(); // no encode will follow, so the intermediate would be orphaned in %TEMP%
+            throw;
+        }
     }
 
     // SLOW: runs in the background after the overlay is gone. Encodes the intermediate into

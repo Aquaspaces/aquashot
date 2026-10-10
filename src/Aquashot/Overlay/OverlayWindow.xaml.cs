@@ -547,13 +547,8 @@ public partial class OverlayWindow : Window
         return new PixelRect(x, y, r.Width, r.Height);
     }
 
-    private PixelRect ClampToMonitor(PixelRect r)
-    {
-        var b = _frame.Monitor.Bounds;
-        double x = Math.Max(b.X, r.X), y = Math.Max(b.Y, r.Y);
-        double right = Math.Min(b.Right, r.Right), bottom = Math.Min(b.Bottom, r.Bottom);
-        return new PixelRect(x, y, Math.Max(MinSel, right - x), Math.Max(MinSel, bottom - y));
-    }
+    private PixelRect ClampToMonitor(PixelRect r) =>
+        SelectionEngine.ClampWithMinSize(r, _frame.Monitor.Bounds, MinSel);
 
     private static Cursor HandleCursor(int i) => i switch
     {
@@ -854,6 +849,7 @@ public partial class OverlayWindow : Window
         }
 
         _recording = true;
+        Recorder.CaptureEnded += OnCaptureEnded;
 
         // The region is now a click-through hole, so keyboard focus can leave the overlay.
         // A low-level hook keeps Esc working (Esc during recording = Stop & save, like the button).
@@ -905,6 +901,14 @@ public partial class OverlayWindow : Window
         SetWindowRgn(hwnd, full, true); // window takes ownership of 'full'
     }
 
+    // FFmpeg died mid-recording: stop now so the error appears immediately instead of when the
+    // user eventually clicks Stop. The encode step reports FFmpeg's message through the tray.
+    private void OnCaptureEnded() =>
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_recording && !_stoppingRecording) _ = StopRecordingAsync(ClipboardMode.None);
+        }));
+
     private void OnRecTick(object? sender, EventArgs e)
     {
         var t = Recorder!.Elapsed; // recorded (un-paused) time
@@ -931,6 +935,7 @@ public partial class OverlayWindow : Window
             _recTimer.Stop();
             _recTimer.Tick -= OnRecTick;
             _recording = false;
+            if (Recorder != null) Recorder.CaptureEnded -= OnCaptureEnded;
             _escHook?.Dispose();
             _escHook = null;
             _hud?.Dispose(); // tear down click/keystroke HUD + its low-level hooks
@@ -944,7 +949,8 @@ public partial class OverlayWindow : Window
                 // TRIM-AFTER-STOP: optionally prompt for an in/out range before the (background) encode.
                 // The dialog scrubs the RECORDED timeline; SetTrim maps it back onto the kept spans so
                 // paused gaps stay dropped. Cancelling the dialog keeps the full (pause-trimmed) clip.
-                if (!_closed && Settings.TrimAfterStop && Recorder.RecordedDuration.TotalSeconds > 0.2)
+                if (!_closed && Settings.TrimAfterStop && !Recorder.CaptureEndedEarly &&
+                    Recorder.RecordedDuration.TotalSeconds > 0.2)
                 {
                     var trim = new TrimWindow(Recorder.RecordedDuration);
                     if (trim.ShowDialog() == true && trim.Trimmed is { } range)
@@ -976,11 +982,8 @@ public partial class OverlayWindow : Window
         if (_closed || _doc == null || _redacting) return;
         var img = new OutputService().Compose(_frame, _selVirtual, _doc);
         if (img.CanFreeze && !img.IsFrozen) img.Freeze();
-        var pin = new PinWindow(img, _sc)
-        {
-            Left = VxToDip(_selVirtual.X),
-            Top = VyToDip(_selVirtual.Y)
-        };
+        var pin = new PinWindow(img, _sc);
+        pin.PlaceAtPixel(_selVirtual.X, _selVirtual.Y);
         pin.Show();
         PinRequested?.Invoke();
     }

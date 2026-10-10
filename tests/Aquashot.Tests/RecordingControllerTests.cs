@@ -16,6 +16,10 @@ public class RecordingControllerTests
         public bool Stopped { get; private set; }
         public string? Intermediate { get; private set; }
         public int EncodeCalls { get; private set; }
+        public int CaptureExitCode { get; set; }
+        private readonly TaskCompletionSource _exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task Exited => _exited.Task;
+        public void Crash() { CaptureExitCode = 1; _exited.TrySetResult(); }
 
         public Task<FFmpegResult> RunAsync(IReadOnlyList<string> args, CancellationToken ct = default)
         {
@@ -36,7 +40,8 @@ public class RecordingControllerTests
         public Task<FFmpegResult> StopAsync()
         {
             Stopped = true;
-            return Task.FromResult(new FFmpegResult(0, ""));
+            _exited.TrySetResult();
+            return Task.FromResult(new FFmpegResult(CaptureExitCode, CaptureExitCode == 0 ? "" : "device lost"));
         }
     }
 
@@ -77,11 +82,66 @@ public class RecordingControllerTests
             await Assert.ThrowsAsync<IOException>(() => controller.StopCaptureAsync());
 
             runner.Stopped.Should().BeTrue();
+            File.Exists(runner.Intermediate).Should().BeFalse();
         }
         finally
         {
             File.Delete(fileAsFolder);
             if (runner.Intermediate != null) File.Delete(runner.Intermediate);
+        }
+    }
+
+    [Fact]
+    public async Task Ffmpeg_exiting_mid_recording_raises_CaptureEnded_and_reports_the_failure()
+    {
+        var runner = new FakeRunner();
+        string folder = Path.Combine(Path.GetTempPath(), "aqua-rec-crash-" + Guid.NewGuid().ToString("N"));
+        var controller = new RecordingController(
+            new AppSettings { EncoderOverride = "libx264", SaveFolder = folder }, runner);
+        var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        controller.CaptureEnded += () => ended.TrySetResult();
+        string? error = null;
+        controller.Finished += (_, message) => error = message;
+        try
+        {
+            (await controller.StartAsync(new PixelRect(0, 0, 320, 240), RecordFormats.Mp4)).Should().BeNull();
+            runner.Crash();
+            await ended.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            controller.CaptureEndedEarly.Should().BeTrue();
+
+            await controller.StopCaptureAsync();
+            await controller.EncodeAndFinishAsync(ClipboardMode.None);
+            error.Should().Contain("Capture failed").And.Contain("device lost");
+        }
+        finally
+        {
+            if (runner.Intermediate != null) File.Delete(runner.Intermediate);
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Normal_stop_does_not_raise_CaptureEnded()
+    {
+        var runner = new FakeRunner();
+        string folder = Path.Combine(Path.GetTempPath(), "aqua-rec-stop-" + Guid.NewGuid().ToString("N"));
+        var controller = new RecordingController(
+            new AppSettings { EncoderOverride = "libx264", SaveFolder = folder }, runner);
+        bool ended = false;
+        controller.CaptureEnded += () => ended = true;
+        try
+        {
+            (await controller.StartAsync(new PixelRect(0, 0, 320, 240), RecordFormats.Mp4)).Should().BeNull();
+            await controller.StopCaptureAsync();
+            await Task.Delay(50);
+            ended.Should().BeFalse();
+            controller.CaptureEndedEarly.Should().BeFalse();
+            await controller.EncodeAndFinishAsync(ClipboardMode.None);
+        }
+        finally
+        {
+            if (runner.Intermediate != null) File.Delete(runner.Intermediate);
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
         }
     }
 

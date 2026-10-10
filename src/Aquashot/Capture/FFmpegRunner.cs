@@ -81,7 +81,9 @@ public class FFmpegRunner : IFFmpegRunner
     {
         private readonly Process _p;
         private readonly StringBuilder _sb;
-        public Session(Process p, StringBuilder sb) { _p = p; _sb = sb; }
+        public Session(Process p, StringBuilder sb) { _p = p; _sb = sb; Exited = p.WaitForExitAsync(); }
+
+        public Task Exited { get; }
 
         public async Task<FFmpegResult> StopAsync()
         {
