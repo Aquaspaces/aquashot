@@ -84,4 +84,19 @@ public class SizeTargeterTests
         SizeTargeter.OverBudget(Budget + 1, Budget).Should().BeTrue();
         SizeTargeter.OverBudget(Budget - 1, Budget).Should().BeFalse();
     }
+
+    [Fact]
+    public void Shrink_never_increases_small_source_dimensions_or_frame_rate()
+    {
+        SizeTargeter.Shrink((2, 100)).Should().Be((2, 100));
+        SizeTargeter.Shrink((4, 800)).Should().Be((4, 400));
+        SizeTargeter.Shrink((20, 100)).Should().Be((10, 100));
+    }
+
+    [Fact]
+    public void Large_finite_budget_does_not_overflow_to_minimum_bitrate()
+    {
+        SizeTargeter.BitrateKbps(TimeSpan.FromSeconds(1), SizeTargeter.BudgetBytes(int.MaxValue))
+            .Should().Be(SizeTargeter.UnlimitedKbps);
+    }
 }

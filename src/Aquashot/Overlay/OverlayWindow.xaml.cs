@@ -53,6 +53,7 @@ public partial class OverlayWindow : Window
     private List<(double X, double Y)>? _penPoints;
 
     private bool _sampling;
+    private bool _redacting;
     private bool _colorCopyMode;           // next click samples a pixel and copies its hex
     private bool _liveRegion;              // freeze toggle: region is showing the live desktop
     private int _selectedIndex = -1;
@@ -91,6 +92,8 @@ public partial class OverlayWindow : Window
     // Per-capture shortcuts (Ctrl+S / Ctrl+D / Ctrl+C) override it.
     public Aquashot.Output.ClipboardMode DefaultClip { get; set; } = Aquashot.Output.ClipboardMode.Image;
     private bool _recording;
+    private bool _startingRecording;
+    private bool _stoppingRecording;
     private CountdownWindow? _countdown;      // live pre-record countdown bubble (null when not counting)
     private GlobalEscHook? _escHook;          // catches Esc while the region is click-through
     private Aquashot.Recording.InputHud.InputHudController? _hud; // click/keystroke HUD over the region
@@ -182,12 +185,16 @@ public partial class OverlayWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _closed = true;
+        _recTimer.Stop();
+        _recTimer.Tick -= OnRecTick;
+        _flashTimer?.Stop();
         _countdown?.Cancel(); // abort any in-flight countdown so its awaiter unwinds cleanly
         _countdown = null;
         _escHook?.Dispose(); // guard against double-dispose (StopRecordingAsync may have run first)
         _escHook = null;
         _hud?.Dispose();     // safety net: ensure HUD hooks are gone if the window closes mid-record
         _hud = null;
+        if (_recording) _ = StopRecordingAsync(RecordingClip(DefaultClip));
         base.OnClosed(e);
     }
 
@@ -289,6 +296,7 @@ public partial class OverlayWindow : Window
             RaiseCancelled();
             return;
         }
+        if (_startingRecording || _stoppingRecording) return;
         if (_phase == Phase.Annotating)
         {
             // Recording lives in the annotating phase; branch on _recording first so Ctrl+S/Ctrl+D
@@ -557,6 +565,7 @@ public partial class OverlayWindow : Window
 
     private void AnnotateDown(MouseButtonEventArgs e)
     {
+        if (_recording || _startingRecording || _stoppingRecording) return;
         if (_colorCopyMode)
         {
             var hex = SampleColorHex(e.GetPosition(Overlay));
@@ -606,7 +615,7 @@ public partial class OverlayWindow : Window
                 Overlay.CaptureMouse();
                 return;
             default:
-                _start = e.GetPosition(Overlay);
+                _start = _lastAnnotateDip = e.GetPosition(Overlay);
                 _dragging = true;
                 Overlay.CaptureMouse();
                 return;
@@ -675,7 +684,7 @@ public partial class OverlayWindow : Window
 
     private void OnMouseWheel(object sender, MouseWheelEventArgs e)
     {
-        if (_phase != Phase.Annotating || _toolbar == null) return;
+        if (_phase != Phase.Annotating || _toolbar == null || _startingRecording || _recording || _stoppingRecording) return;
         _toolbar.AdjustWidth(e.Delta > 0 ? 1 : -1);
         RebuildPreview();
         e.Handled = true;
@@ -691,6 +700,7 @@ public partial class OverlayWindow : Window
             return;
         }
         if (!_dragging) return;
+        AnnotateMove(e);
         _dragging = false;
         Overlay.ReleaseMouseCapture();
         var preview = _layer!.Preview;
@@ -747,7 +757,7 @@ public partial class OverlayWindow : Window
     // The single right-hand button: Capture (save screenshot), Record (start), or Stop.
     private void OnPrimary()
     {
-        if (_closed || _doc == null) return;
+        if (_closed || _doc == null || _redacting || _startingRecording || _stoppingRecording) return;
         if (_recording) { _ = StopRecordingAsync(RecordingClip(DefaultClip)); return; }
         if (_toolbar!.CurrentOutput == CaptureOutput.Image)
         {
@@ -761,7 +771,7 @@ public partial class OverlayWindow : Window
     // Path: copy the saved file path, None: just save). No-op outside the still-image annotate phase.
     private void ConfirmImage(ClipboardMode clip)
     {
-        if (_closed || _doc == null || _recording || _toolbar!.CurrentOutput != CaptureOutput.Image) return;
+        if (_closed || _doc == null || _redacting || _recording || _toolbar!.CurrentOutput != CaptureOutput.Image) return;
         Confirmed?.Invoke(_frame, _selVirtual, _doc, clip);
     }
 
@@ -775,10 +785,39 @@ public partial class OverlayWindow : Window
     // are burned into the output by ffmpeg from a rendered PNG. No popout, fast selection.
     private async Task StartRecordingAsync()
     {
+        if (Recorder == null || _closed || _recording || _startingRecording || _stoppingRecording) return;
+        _startingRecording = true;
+        _toolbar!.SetRecordingControls(true, busy: true);
+        try
+        {
+            await StartRecordingCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            if (_recording) await StopRecordingAsync(ClipboardMode.None);
+            if (!_closed)
+            {
+                UncarveRegion();
+                _liveRegion = false;
+                SetAnnotateChromeVisible(true);
+                _toolbar.SetFreezeActive(false);
+                _toolbar.SetPrimary("Record", "#E03B3B");
+                System.Windows.MessageBox.Show(this, "Recording could not start: " + ex.Message,
+                    "Aquashot", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        finally
+        {
+            _startingRecording = false;
+            if (!_closed) _toolbar.SetRecordingControls(_recording);
+        }
+    }
+
+    private async Task StartRecordingCoreAsync()
+    {
         if (Recorder == null) return;
         var fmt = _toolbar!.CurrentOutput == CaptureOutput.Gif ? RecordFormats.Gif : RecordFormats.Mp4;
 
-        var annPng = TryRenderAnnotationPng();
         CarveRegionHole();
         DimLabel.Visibility = Visibility.Collapsed;
         foreach (var h in _handles) h.Visibility = Visibility.Collapsed;
@@ -799,8 +838,9 @@ public partial class OverlayWindow : Window
             if (!finished || _closed) { if (!_closed) RaiseCancelled(); return; }
         }
 
+        var annPng = TryRenderAnnotationPng();
         var err = await Recorder.StartAsync(_selVirtual, fmt, annPng);
-        if (err != null) { if (!_closed) Close(); return; } // recorder surfaces the error via Finished
+        if (err != null) throw new InvalidOperationException(err);
 
         // If the overlay was closed/cancelled during the awaited encoder detection, the capture
         // session is now live but the window is gone. Tear it down through the normal stop path so
@@ -884,40 +924,57 @@ public partial class OverlayWindow : Window
 
     private async Task StopRecordingAsync(ClipboardMode clip)
     {
-        _recTimer.Stop();
-        _recTimer.Tick -= OnRecTick;
-        _recording = false;
-        _escHook?.Dispose();
-        _escHook = null;
-        _hud?.Dispose(); // tear down click/keystroke HUD + its low-level hooks
-        _hud = null;
-
-        if (Recorder != null)
+        if (!_recording || _stoppingRecording) return;
+        _stoppingRecording = true;
+        if (!_closed) _toolbar?.SetRecordingControls(true, busy: true);
+        try
         {
-            // Stop the live capture (fast) so the intermediate file is finalized.
-            await Recorder.StopCaptureAsync();
+            _recTimer.Stop();
+            _recTimer.Tick -= OnRecTick;
+            _recording = false;
+            _escHook?.Dispose();
+            _escHook = null;
+            _hud?.Dispose(); // tear down click/keystroke HUD + its low-level hooks
+            _hud = null;
 
-            // TRIM-AFTER-STOP: optionally prompt for an in/out range before the (background) encode.
-            // The dialog scrubs the RECORDED timeline; SetTrim maps it back onto the kept spans so
-            // paused gaps stay dropped. Cancelling the dialog keeps the full (pause-trimmed) clip.
-            if (Settings.TrimAfterStop && Recorder.RecordedDuration.TotalSeconds > 0.2)
+            if (Recorder != null)
             {
-                var trim = new TrimWindow(Recorder.RecordedDuration);
-                if (trim.ShowDialog() == true && trim.Trimmed is { } range)
-                    Recorder.SetTrim(range.Start, range.End);
-            }
+                // Stop the live capture (fast) so the intermediate file is finalized.
+                await Recorder.StopCaptureAsync();
 
-            // Kick off the slow encode in the background and close immediately so Stop feels instant.
-            _ = Recorder.EncodeAndFinishAsync(clip); // fire & forget — do NOT await the encode
+                // TRIM-AFTER-STOP: optionally prompt for an in/out range before the (background) encode.
+                // The dialog scrubs the RECORDED timeline; SetTrim maps it back onto the kept spans so
+                // paused gaps stay dropped. Cancelling the dialog keeps the full (pause-trimmed) clip.
+                if (!_closed && Settings.TrimAfterStop && Recorder.RecordedDuration.TotalSeconds > 0.2)
+                {
+                    var trim = new TrimWindow(Recorder.RecordedDuration);
+                    if (trim.ShowDialog() == true && trim.Trimmed is { } range)
+                        Recorder.SetTrim(range.Start, range.End);
+                }
+
+                // Kick off the slow encode in the background and close immediately so Stop feels instant.
+                _ = Recorder.EncodeAndFinishAsync(clip); // fire & forget — do NOT await the encode
+            }
         }
-        if (!_closed) Close();
+        catch (Exception ex)
+        {
+            if (!_closed)
+                System.Windows.MessageBox.Show(this, "Recording could not be saved: " + ex.Message,
+                    "Aquashot", MessageBoxButton.OK, MessageBoxImage.Error);
+            if (!_closed) Cancelled?.Invoke();
+        }
+        finally
+        {
+            _stoppingRecording = false;
+            if (!_closed) Close();
+        }
     }
 
     // Compose the annotated region into a bitmap and float it on screen as a pin,
     // positioned over the original selection, then dismiss the capture overlay.
     private void OnPin()
     {
-        if (_closed || _doc == null) return;
+        if (_closed || _doc == null || _redacting) return;
         var img = new OutputService().Compose(_frame, _selVirtual, _doc);
         if (img.CanFreeze && !img.IsFrozen) img.Freeze();
         var pin = new PinWindow(img, _sc)
@@ -931,6 +988,8 @@ public partial class OverlayWindow : Window
 
     private void RaiseCancelled()
     {
+        if (_recording) { _ = StopRecordingAsync(RecordingClip(DefaultClip)); return; }
+        if (_stoppingRecording) return;
         if (!_closed) Cancelled?.Invoke();
     }
 
@@ -938,7 +997,9 @@ public partial class OverlayWindow : Window
     // OCR runs off a temp PNG of the crop, so boxes come back in crop-local pixel space already.
     private async void OnRedact()
     {
-        if (_closed || _doc == null || Ocr == null || _layer?.Source == null) return;
+        if (_closed || _doc == null || Ocr == null || _layer?.Source == null || _redacting || _recording || _startingRecording) return;
+        _redacting = true;
+        _toolbar?.SetRedacting(true);
         var crop = _layer.Source;
         string? temp = null;
         try
@@ -950,15 +1011,25 @@ public partial class OverlayWindow : Window
             using (var fs = System.IO.File.Create(temp)) enc.Save(fs);
 
             var lines = await Ocr.RecognizeLinesAsync(temp);
-            if (_closed || _doc == null) return;
+            if (_closed || _doc == null || !ReferenceEquals(crop, _layer?.Source)) return;
             var chosen = Aquashot.Redaction.AutoRedactor.SelectLines(lines, Settings.RedactPatterns);
             var shapes = Aquashot.Redaction.AutoRedactor.BuildShapes(chosen, 0, 0,
                 Settings.RedactStyle, Settings.RedactBlurRadius, Settings.RedactPixelateBlock);
             if (shapes.Count > 0) { _doc.AddRange(shapes); _layer?.Refresh(); }
             else FlashDim("No text to redact", new Point(20, 20));
         }
-        catch { /* OCR/redaction is best-effort; never break the capture flow */ }
-        finally { if (temp != null) try { System.IO.File.Delete(temp); } catch { } }
+        catch (Exception ex)
+        {
+            if (!_closed)
+                System.Windows.MessageBox.Show(this, "Text could not be redacted: " + ex.Message,
+                    "Aquashot", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _redacting = false;
+            if (!_closed) _toolbar?.SetRedacting(false);
+            if (temp != null) try { System.IO.File.Delete(temp); } catch { }
+        }
     }
 
     // ---- Capture-mode toolbar actions (colour copy / freeze toggle) ----

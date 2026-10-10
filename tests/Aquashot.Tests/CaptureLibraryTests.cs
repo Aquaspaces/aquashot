@@ -36,6 +36,19 @@ public class CaptureLibraryTests : IDisposable
     }
 
     [Fact]
+    public void Add_older_backfilled_capture_does_not_evict_a_newer_capture()
+    {
+        var newer = MakeFile("newer.png");
+        var older = MakeFile("older.png");
+        var lib = new CaptureLibrary(_path, cap: 1);
+        lib.Add(newer, new DateTime(2026, 1, 2));
+        lib.Add(older, new DateTime(2026, 1, 1));
+
+        lib.Entries.Select(e => e.Path).Should().Equal(newer);
+        new CaptureLibrary(_path).Entries.Select(e => e.Path).Should().Equal(newer);
+    }
+
+    [Fact]
     public void Prunes_missing_files_on_load()
     {
         var present = MakeFile("p.png");
@@ -72,6 +85,31 @@ public class CaptureLibraryTests : IDisposable
         var e = reloaded.Entries.Single();
         e.OcrDone.Should().BeTrue();
         e.OcrText.Should().Be("hello world");
+    }
+
+    [Fact]
+    public void Load_discards_null_invalid_and_duplicate_entries()
+    {
+        var present = MakeFile("present.png");
+        File.WriteAllText(_path, System.Text.Json.JsonSerializer.Serialize(new object?[]
+        {
+            null, new { Path = (string?)null }, new { Path = present }, new { Path = present.ToUpperInvariant() }
+        }));
+
+        new CaptureLibrary(_path).Entries.Select(e => e.Path).Should().Equal(present);
+    }
+
+    [Fact]
+    public void Remove_updates_search_and_persists_without_deleting_the_file()
+    {
+        var present = MakeFile("present.png");
+        var lib = new CaptureLibrary(_path);
+        lib.Add(present, DateTime.Now);
+        lib.Remove(present.ToUpperInvariant());
+
+        lib.Search("").Should().BeEmpty();
+        new CaptureLibrary(_path).Entries.Should().BeEmpty();
+        File.Exists(present).Should().BeTrue();
     }
 
     [Fact]

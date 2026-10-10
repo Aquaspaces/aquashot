@@ -22,6 +22,42 @@ public class SettingsStoreTests
     }
 
     [Fact]
+    public void Load_ExplicitNullsUseDefaultsAndPreserveOtherSettings()
+    {
+        var path = TempFile();
+        try
+        {
+            File.WriteAllText(path, """{"SaveFolder":null,"Hotkey":null,"HistoryCap":null,"EnableOcr":false}""");
+            var settings = new SettingsStore(path).Load();
+            settings.SaveFolder.Should().Be(new AppSettings().SaveFolder);
+            settings.Hotkey.Should().Be("PrintScreen");
+            settings.HistoryCap.Should().Be(1000);
+            settings.EnableOcr.Should().BeFalse();
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Save_FailedReplacementPreservesPreviousSettingsAndRemovesTemporaryFile()
+    {
+        var path = TempFile();
+        try
+        {
+            var store = new SettingsStore(path);
+            store.Save(new AppSettings { Hotkey = "Ctrl+Alt+S" });
+            using (var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                Action save = () => store.Save(new AppSettings { Hotkey = "PrintScreen" });
+            save.Should().Throw<Exception>().Where(ex => ex is IOException || ex is UnauthorizedAccessException);
+            }
+            store.Load().Hotkey.Should().Be("Ctrl+Alt+S");
+            Directory.EnumerateFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + ".*.tmp")
+                .Should().BeEmpty();
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public void SaveThenLoad_RoundTripsAllFields()
     {
         var path = TempFile();

@@ -206,6 +206,7 @@ public class FFmpegArgsTests
     {
         var args = FFmpegArgs.Mp4Transcode("mid.mp4", "libx264", 4000, "out.mp4", includeAudio: true);
         var s = Join(args);
+        s.Should().Contain("-map 0:v"); // audio mapping disables automatic video selection
         s.Should().Contain("-map 0:a?");
         s.Should().Contain("-c:a aac");
     }

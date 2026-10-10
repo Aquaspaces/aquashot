@@ -60,6 +60,13 @@ public class AutoRedactorTests
     }
 
     [Fact]
+    public void SelectLines_PathologicalPattern_RedactsUncertainLineWithoutHanging()
+    {
+        var lines = new[] { Line(new string('a', 4096) + "!", 0, 0) };
+        AutoRedactor.SelectLines(lines, "^(a+)+$").Should().ContainSingle();
+    }
+
+    [Fact]
     public void BuildShapes_OffsetsBoxesByCropOrigin()
     {
         var shapes = AutoRedactor.BuildShapes(new[] { Line("x", 100, 50) }, 30, 20, "Blur", 8, 12);

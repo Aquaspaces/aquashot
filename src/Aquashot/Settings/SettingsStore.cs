@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Aquashot.Settings;
 
@@ -17,13 +18,20 @@ public class SettingsStore
     public AppSettings Load()
     {
         if (!File.Exists(_path)) return new AppSettings();
-        try { return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path)) ?? new AppSettings(); }
+        try
+        {
+            var json = JsonNode.Parse(File.ReadAllText(_path))?.AsObject();
+            if (json == null) return new AppSettings();
+            // Explicit nulls in older/edited files should use the same defaults as missing keys.
+            foreach (var key in json.Where(p => p.Value == null).Select(p => p.Key).ToList())
+                json.Remove(key);
+            return json.Deserialize<AppSettings>() ?? new AppSettings();
+        }
         catch { return new AppSettings(); }
     }
 
     public void Save(AppSettings settings)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        File.WriteAllText(_path, JsonSerializer.Serialize(settings, Opts));
+        JsonFile.Write(_path, settings, Opts);
     }
 }

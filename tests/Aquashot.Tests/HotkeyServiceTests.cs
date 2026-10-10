@@ -55,4 +55,48 @@ public class HotkeyServiceTests
     {
         HotkeyService.ParseHotkey("NotAKey").vk.Should().Be(0u);
     }
+
+    [Theory]
+    [InlineData("Ctrl+Typo+S")]
+    [InlineData("Ctrl+S+A")]
+    [InlineData("Ctrl++S")]
+    [InlineData("Ctrl+99999")]
+    [InlineData("Ctrl+LeftCtrl")]
+    [InlineData("Ctrl+None")]
+    [InlineData("Ctrl+")]
+    [InlineData(null)]
+    public void ParseHotkey_MalformedCombo_DoesNotRegisterADifferentShortcut(string? text)
+    {
+        HotkeyService.ParseHotkey(text).vk.Should().Be(0u);
+    }
+
+    [Fact]
+    public void RegisterAll_AllowsTwoActionsToSwapShortcuts()
+    {
+        Exception? error = null;
+        var thread = new System.Threading.Thread(() =>
+        {
+            try
+            {
+                using var service = new HotkeyService();
+                service.RegisterAll(new[]
+                {
+                    (HotkeyAction.Capture, (string?)"Ctrl+Alt+Shift+F23"),
+                    (HotkeyAction.Freeze, (string?)"Ctrl+Alt+Shift+F24")
+                }).Values.Should().OnlyContain(ok => ok);
+                service.RegisterAll(new[]
+                {
+                    (HotkeyAction.Capture, (string?)"Ctrl+Alt+Shift+F24"),
+                    (HotkeyAction.Freeze, (string?)"Ctrl+Alt+Shift+F23")
+                }).Values.Should().OnlyContain(ok => ok);
+                service.RegisterAll(Array.Empty<(HotkeyAction, string?)>());
+                service.Register(HotkeyAction.CaptureWindow, "Ctrl+Alt+Shift+F24").Should().BeTrue();
+            }
+            catch (Exception ex) { error = ex; }
+        });
+        thread.SetApartmentState(System.Threading.ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        error.Should().BeNull();
+    }
 }

@@ -41,7 +41,21 @@ public class OutputService
         Directory.CreateDirectory(settings.SaveFolder);
         string file = Path.Combine(settings.SaveFolder,
             FilenameGenerator.Generate(settings.FilenamePattern, settings.ImageFormat, now, windowTitle, appName));
-        File.WriteAllBytes(file, Encode(image, settings.ImageFormat));
+        var bytes = Encode(image, settings.ImageFormat);
+        var original = file;
+        for (int n = 2; ; n++)
+        {
+            FileStream stream;
+            try { stream = new FileStream(file, FileMode.CreateNew, FileAccess.Write); }
+            catch (IOException) when (File.Exists(file) || Directory.Exists(file))
+            {
+                file = Path.Combine(settings.SaveFolder,
+                    Path.GetFileNameWithoutExtension(original) + "-" + n + Path.GetExtension(original));
+                continue;
+            }
+            using (stream) stream.Write(bytes);
+            break;
+        }
 
         // Apply the clipboard action after the file is written so Path mode can copy the path.
         switch (clip)
@@ -109,9 +123,8 @@ public class OutputService
     public static string UniqueRecordingOutputBase(AppSettings settings, DateTime now, params string[] exts)
     {
         var baseStem = RecordingOutputBase(settings, now);
-        if (exts.Length == 0) return baseStem;
-
         bool Collides(string stem) =>
+            File.Exists(stem + ".aquashot-recording") ||
             exts.Any(ext => File.Exists(stem + "." + ext.TrimStart('.')));
 
         if (!Collides(baseStem)) return baseStem;
@@ -119,6 +132,25 @@ public class OutputService
         {
             var candidate = baseStem + "-" + n;
             if (!Collides(candidate)) return candidate;
+        }
+    }
+
+    // Hold this reservation until encoding finishes. DeleteOnClose also releases it if the
+    // process exits, without exposing empty video files to history scans or other apps.
+    public static string ReserveRecordingOutputBase(AppSettings settings, DateTime now,
+        out FileStream reservation, params string[] exts)
+    {
+        while (true)
+        {
+            string stem = UniqueRecordingOutputBase(settings, now, exts);
+            string path = stem + ".aquashot-recording";
+            try
+            {
+                reservation = new FileStream(path, FileMode.CreateNew, FileAccess.Write,
+                    FileShare.None, 1, FileOptions.DeleteOnClose);
+                return stem;
+            }
+            catch (IOException) when (File.Exists(path)) { /* another recording claimed it */ }
         }
     }
 

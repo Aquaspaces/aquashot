@@ -178,7 +178,7 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         {
             Refresh();
             if (_enableOcr) await _indexer.BackfillAsync(_saveFolder);
-            Refresh();
+            if (!_closed) Refresh();
         };
     }
 
@@ -264,7 +264,7 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         // Instant feedback: show the already-decoded thumbnail now so every arrow press updates the
         // view immediately. The full-res image (~120ms) and the OCR overlay (~350ms) fill in after
         // the user settles, and are skipped entirely while stepping fast.
-        if (tile.Thumb != null) Overlay.SetImage(tile.Thumb);
+        Overlay.SetImage(tile.Thumb);
 
         _detailTimer.Stop(); _detailTimer.Start();
         _ocrTimer.Stop(); _ocrTimer.Start();
@@ -282,7 +282,8 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         {
             var gpath = tile.Path;
             var clip = await Task.Run(() => GifAnimator.Load(gpath)); // decode frames off the UI thread
-            if (_detailIndex != index) return; // stepped away; drop this stale GIF
+            if (_closed || !string.Equals(_filtered.ElementAtOrDefault(_detailIndex)?.Path, gpath,
+                    StringComparison.OrdinalIgnoreCase)) return;
             if (clip != null && clip.Frames.Count > 0) Overlay.SetAnimatedClip(clip);
             else Overlay.SetImage(DecodeForDisplay(gpath));
         }
@@ -290,14 +291,15 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         {
             var path = tile.Path;
             var full = await Task.Run(() => DecodeForDisplay(path));
-            if (_detailIndex != index) return; // user already stepped away; drop this stale image
+            if (_closed || !string.Equals(_filtered.ElementAtOrDefault(_detailIndex)?.Path, path,
+                    StringComparison.OrdinalIgnoreCase)) return;
             Overlay.SetImage(full);
             // SetImage clears the overlay; re-apply cached OCR lines, mapped with the TRUE source
             // dims so they line up even though the displayed bitmap is downscaled. Re-verify the
             // landed path (a rapid second ShowDetail can move _detailIndex onto a different file).
             if (!string.Equals(_filtered.ElementAtOrDefault(_detailIndex)?.Path, path, StringComparison.OrdinalIgnoreCase))
                 return;
-            if (_ocrCache.TryGetValue(path, out var oc)) Overlay.SetLines(oc.Lines, oc.SrcW, oc.SrcH);
+            if (_enableOcr && _ocrCache.TryGetValue(path, out var oc)) Overlay.SetLines(oc.Lines, oc.SrcW, oc.SrcH);
         }
     }
 
@@ -334,22 +336,28 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
     // never pays for OCR. Cached hits are instant; first-time recognition runs once off the engine.
     private async void LoadOcr()
     {
+        if (_closed || !_enableOcr) return;
         int index = _detailIndex;
         if (index < 0 || index >= _filtered.Count) return;
         var tile = _filtered[index];
-        if (tile.IsGif) return; // GIFs aren't text-indexed in the detail overlay
+        if (!tile.IsImage) return;
         var path = tile.Path;
 
         if (_ocrCache.TryGetValue(path, out var cached))
         { Overlay.SetLines(cached.Lines, cached.SrcW, cached.SrcH); return; }
 
-        var lines = await _ocr.RecognizeLinesAsync(path);
-        var (sw, sh) = await Task.Run(() => SourcePixelSize(path)); // OCR coordinate space (full-res)
-        var item = new OcrCacheItem(lines, sw, sh);
-        _ocrCache[path] = item;
-        if (_detailIndex == index && index >= 0 && index < _filtered.Count &&
-            string.Equals(_filtered[index].Path, path, StringComparison.OrdinalIgnoreCase))
-            Overlay.SetLines(item.Lines, item.SrcW, item.SrcH);
+        try
+        {
+            var lines = await _ocr.RecognizeLinesAsync(path);
+            if (_closed || !_enableOcr) return;
+            var (sw, sh) = await Task.Run(() => SourcePixelSize(path)); // OCR coordinate space (full-res)
+            var item = new OcrCacheItem(lines, sw, sh);
+            _ocrCache[path] = item;
+            if (!_closed && _enableOcr &&
+                string.Equals(_filtered.ElementAtOrDefault(_detailIndex)?.Path, path, StringComparison.OrdinalIgnoreCase))
+                Overlay.SetLines(item.Lines, item.SrcW, item.SrcH);
+        }
+        catch { /* OCR is optional; an unreadable image must not crash the dispatcher. */ }
     }
 
     private void StepDetail(int delta)
@@ -365,11 +373,16 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         DetailPanel.Visibility = Visibility.Collapsed;
         Grid.Visibility = Visibility.Visible;
         _detailIndex = -1;
+        Overlay.SetImage(null); // release the detail bitmap and stop GIF playback
     }
 
     protected override void OnClosed(EventArgs e)
     {
         _closed = true;
+        _refreshGen++;
+        _searchTimer.Stop();
+        CloseDetail();
+        StopHover();
         try { _lifetimeCts.Cancel(); } catch { }
         _lifetimeCts.Dispose();
         base.OnClosed(e);
@@ -382,6 +395,11 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         _settings = settings;
         _saveFolder = settings.SaveFolder;
         _enableOcr = settings.EnableOcr;
+        if (!_enableOcr)
+        {
+            _ocrTimer.Stop();
+            Overlay.SetLines(Array.Empty<OcrLine>(), 0, 0);
+        }
     }
 
     // ===== Filmstrip =====
@@ -702,27 +720,22 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         catch { return; }
 
         var editor = new Aquashot.Editor.AnnotationEditorWindow(source, _settings, _enableOcr ? _ocr : null, flattened =>
-        {
-            try
+            Dispatcher.BeginInvoke(new Action(() =>
             {
-                if (flattened.CanFreeze && !flattened.IsFrozen) flattened.Freeze(); // freeze so it crosses threads
-                // _reannotateSave bottoms out in a clipboard write that can spin ~0.5s on retries;
-                // run it off the UI thread so the editor/gallery don't freeze, then marshal back.
-                _ = Task.Run(() =>
+                // The save callback updates the Windows clipboard and tray menu, both bound to
+                // the UI thread. Queue it after the editor closes rather than on an MTA worker.
+                try
                 {
-                    string saved;
-                    try { saved = _reannotateSave(flattened); } // persists + library.Add + OCR enqueue (TrayHost)
-                    catch { return; }
-                    Dispatcher.BeginInvoke(new Action(() =>
-                    {
-                        if (_closed) return;
-                        Refresh();
-                        OpenDetailFor(saved);
-                    }));
-                });
-            }
-            catch { }
-        });
+                    var saved = _reannotateSave(flattened);
+                    if (_closed) return;
+                    Refresh();
+                    OpenDetailFor(saved);
+                }
+                catch (Exception ex)
+                {
+                    System.Windows.MessageBox.Show("Could not save edited capture: " + ex.Message, "Aquashot");
+                }
+            })));
         editor.Owner = this;
         editor.Show();
     }
@@ -763,7 +776,15 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         var ok = System.Windows.MessageBox.Show(this, $"Delete {t.Name}?", "Aquashot",
             MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (ok != MessageBoxResult.Yes) return;
-        try { if (File.Exists(t.Path)) File.Delete(t.Path); } catch { }
+        try
+        {
+            File.Delete(t.Path);
+            _lib.Remove(t.Path);
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show(this, "Could not delete file: " + ex.Message, "Aquashot");
+        }
         Refresh();
     }
 }

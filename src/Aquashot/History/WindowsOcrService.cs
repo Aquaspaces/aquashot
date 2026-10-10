@@ -11,8 +11,8 @@ using Windows.Storage.Streams;
 
 namespace Aquashot.History;
 
-// Wraps the built-in Windows OCR engine (user-profile languages). Returns "" on any
-// failure so indexing never breaks the app.
+// Indexing is best-effort; line recognition propagates errors so redaction callers
+// can distinguish a failed scan from an image containing no text.
 public class WindowsOcrService : IOcrService
 {
     public async Task<string> RecognizeAsync(string imagePath)
@@ -38,33 +38,29 @@ public class WindowsOcrService : IOcrService
 
     public async Task<IReadOnlyList<OcrLine>> RecognizeLinesAsync(string imagePath)
     {
-        try
+        byte[] bytes = await File.ReadAllBytesAsync(imagePath);
+        var engine = OcrEngine.TryCreateFromUserProfileLanguages()
+                     ?? OcrEngine.TryCreateFromLanguage(new Language("en-US"))
+                     ?? throw new InvalidOperationException("Windows OCR is unavailable. Install an OCR language in Windows settings.");
+
+        using var stream = new InMemoryRandomAccessStream();
+        await stream.WriteAsync(bytes.AsBuffer());
+        stream.Seek(0);
+        var decoder = await BitmapDecoder.CreateAsync(stream);
+        using var bmp = await decoder.GetSoftwareBitmapAsync();
+        var result = await engine.RecognizeAsync(bmp);
+
+        var lines = new List<OcrLine>();
+        foreach (var line in result.Lines)
         {
-            var engine = OcrEngine.TryCreateFromUserProfileLanguages()
-                         ?? OcrEngine.TryCreateFromLanguage(new Language("en-US"));
-            if (engine == null) return System.Array.Empty<OcrLine>();
-
-            byte[] bytes = await File.ReadAllBytesAsync(imagePath);
-            using var stream = new InMemoryRandomAccessStream();
-            await stream.WriteAsync(bytes.AsBuffer());
-            stream.Seek(0);
-            var decoder = await BitmapDecoder.CreateAsync(stream);
-            using var bmp = await decoder.GetSoftwareBitmapAsync();
-            var result = await engine.RecognizeAsync(bmp);
-
-            var lines = new List<OcrLine>();
-            foreach (var line in result.Lines)
+            System.Windows.Rect box = System.Windows.Rect.Empty;
+            foreach (var w in line.Words)
             {
-                System.Windows.Rect box = System.Windows.Rect.Empty;
-                foreach (var w in line.Words)
-                {
-                    var r = w.BoundingRect; // Windows.Foundation.Rect
-                    box.Union(new System.Windows.Rect(r.X, r.Y, r.Width, r.Height));
-                }
-                if (!box.IsEmpty) lines.Add(new OcrLine(line.Text, box));
+                var r = w.BoundingRect; // Windows.Foundation.Rect
+                box.Union(new System.Windows.Rect(r.X, r.Y, r.Width, r.Height));
             }
-            return lines;
+            if (!box.IsEmpty) lines.Add(new OcrLine(line.Text, box));
         }
-        catch { return System.Array.Empty<OcrLine>(); }
+        return lines;
     }
 }

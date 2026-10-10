@@ -113,6 +113,8 @@ public static class FFmpegArgs
         var args = new List<string> { "-y", "-i", input };
         if (overlayPng == null)
         {
+            // An audio -map disables automatic video selection, so always map video explicitly.
+            args.AddRange(new[] { "-map", "0:v" });
             args.Add("-c:v"); args.Add(encoder);
             args.AddRange(new[] { "-pix_fmt", "yuv420p" });
         }

@@ -1,6 +1,8 @@
 using System;
+using System.Net;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Aquashot.Settings;
 
 namespace Aquashot.Share;
@@ -59,8 +61,8 @@ public static class ShareService
         var name = string.IsNullOrWhiteSpace(fileName) ? "image" : fileName;
         return format?.Trim().ToLowerInvariant() switch
         {
-            "markdown" => $"![{name}]({url})",
-            "html"     => $"<img src=\"{url}\" alt=\"{name}\">",
+            "markdown" => $"![{Regex.Replace(name, @"[\\\[\]]", m => "\\" + m.Value)}]({Regex.Replace(url, @"[\\\s()<>]", m => Uri.EscapeDataString(m.Value))})",
+            "html"     => $"<img src=\"{WebUtility.HtmlEncode(url)}\" alt=\"{WebUtility.HtmlEncode(name)}\">",
             _          => url,
         };
     }

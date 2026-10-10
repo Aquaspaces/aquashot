@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using Aquashot.Settings;
 
 namespace Aquashot.History;
 
@@ -35,7 +36,9 @@ public class CaptureLibrary
         lock (_lock)
         {
             _entries.RemoveAll(e => string.Equals(e.Path, file, StringComparison.OrdinalIgnoreCase));
-            _entries.Insert(0, new CaptureEntry { Path = file, CapturedAt = capturedAt });
+            var index = _entries.FindIndex(e => e.CapturedAt <= capturedAt);
+            _entries.Insert(index < 0 ? _entries.Count : index,
+                new CaptureEntry { Path = file, CapturedAt = capturedAt });
             if (_entries.Count > _cap) _entries.RemoveRange(_cap, _entries.Count - _cap);
             Save();
         }
@@ -49,6 +52,15 @@ public class CaptureLibrary
             if (i < 0) return;
             _entries[i] = _entries[i] with { OcrText = text, OcrDone = true };
             Save();
+        }
+    }
+
+    public void Remove(string file)
+    {
+        lock (_lock)
+        {
+            if (_entries.RemoveAll(e => string.Equals(e.Path, file, StringComparison.OrdinalIgnoreCase)) > 0)
+                Save();
         }
     }
 
@@ -81,7 +93,9 @@ public class CaptureLibrary
         }
         catch { _entries = new(); }
 
-        _entries.RemoveAll(e => !File.Exists(e.Path));
+        _entries.RemoveAll(e => e == null || !File.Exists(e.Path));
+        _entries = _entries.OrderByDescending(e => e.CapturedAt)
+            .DistinctBy(e => e.Path, StringComparer.OrdinalIgnoreCase).ToList();
         if (_entries.Count > _cap) _entries.RemoveRange(_cap, _entries.Count - _cap);
     }
 
@@ -94,8 +108,7 @@ public class CaptureLibrary
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            File.WriteAllText(_path, JsonSerializer.Serialize(_entries));
+            JsonFile.Write(_path, _entries);
         }
         catch { /* best-effort */ }
     }

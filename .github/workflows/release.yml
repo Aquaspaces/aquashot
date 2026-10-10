@@ -27,11 +27,20 @@ jobs:
       - name: Resolve version
         id: ver
         shell: pwsh
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          $v = "${{ github.event.inputs.version }}"
-          if (-not $v) { $v = "${{ github.ref_name }}" -replace '^v','' }
+          $v = $env:INPUT_VERSION
+          if (-not $v) { $v = $env:REF_NAME -replace '^v','' }
+          if ($v -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
+            throw 'Version must be a semantic version, such as 1.2.3 or 1.2.3-beta.1'
+          }
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Building version $v"
+
+      - name: Test before packaging
+        run: dotnet test --configuration Release --verbosity minimal
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
@@ -56,7 +65,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: v${{ steps.ver.outputs.version }}
           name: Aquashot ${{ steps.ver.outputs.version }}
           generate_release_notes: true
           files: dist/*.exe

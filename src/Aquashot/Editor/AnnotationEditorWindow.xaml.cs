@@ -50,6 +50,7 @@ public partial class AnnotationEditorWindow : Window
     private (double X, double Y) _moveLastImg;
 
     private bool _saved;
+    private bool _redacting;
     private bool _closed; // set on close so async continuations can bail before touching the window
 
     // settings/ocr are optional so the editor can be opened standalone; onSave is last to allow a
@@ -63,7 +64,7 @@ public partial class AnnotationEditorWindow : Window
         _onSave = onSave;
         _settings = settings ?? new Aquashot.Settings.AppSettings();
         _ocr = ocr;
-        SourceImage.Source = source; // AnnotationRenderer.Draw ignores its source arg, so show the image here
+        SourceImage.Source = source;
 
         // Drawing surface sized to the IMAGE in pixels; a ScaleTransform fits it to the view,
         // so shapes are authored in image-pixel space (same model as the capture overlay).
@@ -165,7 +166,7 @@ public partial class AnnotationEditorWindow : Window
                 Overlay.CaptureMouse();
                 return;
             default:
-                _start = e.GetPosition(Overlay);
+                _start = _lastDip = e.GetPosition(Overlay);
                 _dragging = true;
                 Overlay.CaptureMouse();
                 return;
@@ -206,6 +207,8 @@ public partial class AnnotationEditorWindow : Window
             return;
         }
         if (!_dragging) return;
+        // Mouse-up can arrive after the last move (or without a move for a quick drag).
+        OnMouseMove(sender, e);
         _dragging = false;
         Overlay.ReleaseMouseCapture();
         var preview = _layer.Preview;
@@ -319,7 +322,10 @@ public partial class AnnotationEditorWindow : Window
     // OCR the source image and blur/pixelate every (matching) detected text line. No-op without OCR.
     private async void OnRedact()
     {
-        if (_ocr == null) return;
+        if (_ocr == null || _redacting) return;
+        _redacting = true;
+        _toolbar.SetRedacting(true);
+        var source = _source;
         string? temp = null;
         try
         {
@@ -330,21 +336,36 @@ public partial class AnnotationEditorWindow : Window
             using (var fs = System.IO.File.Create(temp)) enc.Save(fs);
 
             var lines = await _ocr.RecognizeLinesAsync(temp);
-            if (_closed) return; // the editor was closed while OCR was in flight
+            if (_closed || !ReferenceEquals(source, _source)) return;
             // Boxes are in the saved-image's pixel space == the editor's image space (offset 0,0).
             var chosen = Aquashot.Redaction.AutoRedactor.SelectLines(lines, _settings.RedactPatterns);
             var shapes = Aquashot.Redaction.AutoRedactor.BuildShapes(chosen, 0, 0,
                 _settings.RedactStyle, _settings.RedactBlurRadius, _settings.RedactPixelateBlock);
             if (shapes.Count > 0) { _doc.AddRange(shapes); _layer.Refresh(); }
         }
-        catch { /* best-effort */ }
-        finally { if (temp != null) try { System.IO.File.Delete(temp); } catch { } }
+        catch (Exception ex)
+        {
+            if (!_closed)
+                System.Windows.MessageBox.Show(this, "Text could not be redacted: " + ex.Message,
+                    "Aquashot", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _redacting = false;
+            if (!_closed) _toolbar.SetRedacting(false);
+            if (temp != null) try { System.IO.File.Delete(temp); } catch { }
+        }
     }
 
     // ---- Post-capture crop ----
 
     private void OnCropModeChanged(bool on)
     {
+        if (!on && _cropMode && _cropStart != null)
+        {
+            ApplyCrop();
+            return;
+        }
         _cropMode = on;
         ClearSelection();
         ClearCropRect();
@@ -391,6 +412,8 @@ public partial class AnnotationEditorWindow : Window
     private void ApplyCrop()
     {
         if (_cropStart is not (double sx, double sy) || _cropRect == null || _cropEndDip is not Point endDip) return;
+        _dragging = false;
+        Overlay.ReleaseMouseCapture();
         var (cx, cy) = ToImage(endDip);
         double x0 = Math.Min(sx, cx), y0 = Math.Min(sy, cy);
         double w = Math.Abs(cx - sx), h = Math.Abs(cy - sy);
@@ -422,6 +445,8 @@ public partial class AnnotationEditorWindow : Window
 
     private void CancelCrop()
     {
+        _dragging = false;
+        Overlay.ReleaseMouseCapture();
         ClearCropRect();
         _cropStart = null;
         _cropEndDip = null;
@@ -457,7 +482,8 @@ public partial class AnnotationEditorWindow : Window
     // Flatten the source + annotations into one bitmap and hand it to the caller, then close.
     private void Save()
     {
-        if (_saved) return;
+        if (_saved || _redacting) return;
+        if (_cropMode) ApplyCrop();
         _saved = true;
         var result = new AnnotationRenderer().Flatten(
             _source, new PixelRect(0, 0, _source.PixelWidth, _source.PixelHeight), _doc.Shapes);

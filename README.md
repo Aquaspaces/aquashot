@@ -3,7 +3,7 @@
 Windows-Native screenshot and screen capture tool designed with speed and power users in mind, while maintaining simplicity and ease of use.
 inspired by [flameshot](https://github.com/flameshot-org/flameshot), [ShareX](https://github.com/ShareX/ShareX), and Snipping Tool.
 
-## Features (v1)
+## Features
 
 - **Region capture** — drag a rectangle.
 - **Window capture** — hover a window, click to grab it (bounds via DWM extended frame, so drop-shadow padding is excluded).
@@ -16,6 +16,9 @@ inspired by [flameshot](https://github.com/flameshot-org/flameshot), [ShareX](ht
 - **Screenshot history** — a gallery window of recent captures with thumbnails, plus **OCR text search**: every screenshot is indexed with the built-in Windows OCR engine so you can search for words *inside* your images.
 - **Global hotkey** — `PrtSc` by default, rebindable. Detects and can disable the Windows 11 "use PrtSc to open Snipping Tool" mapping.
 - **System tray** — capture region/window, history, settings, quit. Optional run-at-startup.
+- **More capture modes** — all monitors, repeat last region, delayed and scrolling captures, desktop freeze, and pinned images.
+- **Screen recording** — GIF/MP4, optional microphone/system audio, countdown, pause, trim, and click/keystroke overlays. Requires FFmpeg.
+- **Editing and sharing** — crop, highlighter, spotlight, OCR-assisted redaction, and optional Imgur/custom HTTP uploads.
 
 ### The multi-monitor fix
 
@@ -42,6 +45,8 @@ The app starts in the system tray (no main window). Press `PrtSc` (or use the tr
 > (the Windows 10 2004+ SDK projection, needed for the built-in OCR engine). A newer
 > SDK (10.x) also builds it as long as the .NET 8 targeting pack is installed.
 
+The solution uses the `.sln` format supported by the .NET 8 SDK and CI.
+
 ### Screen recording (optional)
 
 GIF/MP4 recording needs an `ffmpeg.exe` that is **not** shipped in this repo. Run
@@ -49,6 +54,10 @@ GIF/MP4 recording needs an `ffmpeg.exe` that is **not** shipped in this repo. Ru
 `src/Aquashot/Resources/`. Without it the app runs fine; recording just shows
 "unavailable". Note the licensing consequence of bundling FFmpeg in a release
 binary — see [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
+
+Recording size settings are targets: Aquashot preserves the complete clip and warns
+when an output exceeds its target. Blur/pixelate annotations become opaque masks
+in recordings; still screenshots retain their selected blur/pixelate effects.
 
 ## Tests
 
@@ -74,9 +83,10 @@ src/Aquashot/
 tests/Aquashot.Tests/
 ```
 
-## Backlog (deferred past v1)
+## Review and remaining work
 
-Scrolling capture · built-in upload/share · fullscreen / per-monitor one-shot mode · last-region repeat · highlighter tool · post-capture crop · "brighten only the selection" cutout polish · cross-monitor drag clamping.
+See [the codebase review](docs/codebase-review.md) for implemented fixes, validation,
+and remaining issues, including undo coverage, media previews, and mixed-DPI positioning.
 
 ## Not planned
 

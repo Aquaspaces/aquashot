@@ -28,8 +28,7 @@ public sealed class CustomHttpUploader : IUploader
                 return ShareResult.Failure("File not found: " + filePath);
 
             using var form = new MultipartFormDataContent();
-            var bytes = await File.ReadAllBytesAsync(filePath, ct);
-            var part = new ByteArrayContent(bytes);
+            using var part = new StreamContent(File.OpenRead(filePath));
             part.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
             var field = string.IsNullOrWhiteSpace(settings.CustomUploadFieldName) ? "file" : settings.CustomUploadFieldName.Trim();
             form.Add(part, field, Path.GetFileName(filePath));

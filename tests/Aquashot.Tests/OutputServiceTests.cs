@@ -17,10 +17,16 @@ public class OutputServiceTests
     private static T Sta<T>(System.Func<T> f)
     {
         T result = default!;
-        var t = new Thread(() => result = f());
+        System.Exception? error = null;
+        var t = new Thread(() =>
+        {
+            try { result = f(); }
+            catch (System.Exception ex) { error = ex; }
+        });
         t.SetApartmentState(ApartmentState.STA);
         t.Start();
         t.Join();
+        if (error != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
         return result;
     }
 
@@ -127,6 +133,29 @@ public class OutputServiceTests
         {
             try { System.IO.Directory.Delete(dir, recursive: true); } catch { }
         }
+    }
+
+    [Fact]
+    public void SaveComposite_preserves_existing_captures_when_names_collide()
+    {
+        var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aqua-collision-" + System.Guid.NewGuid().ToString("N"));
+        var settings = new Aquashot.Settings.AppSettings { SaveFolder = dir, FilenamePattern = "Shot", ImageFormat = "png" };
+        System.IO.Directory.CreateDirectory(dir);
+        var original = System.IO.Path.Combine(dir, "Shot.png");
+        System.IO.File.WriteAllText(original, "original capture");
+        try
+        {
+            var paths = Sta(() =>
+            {
+                var output = new OutputService();
+                return Enumerable.Range(0, 2).Select(_ => output.SaveComposite(
+                    Blank(20, 12), settings, System.DateTime.Now, ClipboardMode.None)).ToArray();
+            });
+            paths.Should().Equal(System.IO.Path.Combine(dir, "Shot-2.png"), System.IO.Path.Combine(dir, "Shot-3.png"));
+            System.IO.File.ReadAllText(original).Should().Be("original capture");
+            paths.All(System.IO.File.Exists).Should().BeTrue();
+        }
+        finally { System.IO.Directory.Delete(dir, recursive: true); }
     }
 
     [Fact]

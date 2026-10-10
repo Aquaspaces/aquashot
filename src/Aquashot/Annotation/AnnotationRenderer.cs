@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -76,7 +77,17 @@ public class AnnotationRenderer
         int w = Math.Max(1, width), h = Math.Max(1, height);
         var dv = new DrawingVisual();
         using (var dc = dv.RenderOpen())
-            Draw(dc, shapes, null, new Size(w, h)); // no source: blur/pixelate are no-ops here
+        {
+            // A transparent video overlay cannot blur live pixels. Preserve every redaction
+            // as an opaque mask instead of silently exposing the area in GIF/MP4 output.
+            var overlayShapes = shapes.Select(s => s switch
+            {
+                BlurShape b => new RectShape(b.X, b.Y, b.W, b.H, "#000000", 0, Filled: true),
+                PixelateShape p => new RectShape(p.X, p.Y, p.W, p.H, "#000000", 0, Filled: true),
+                _ => s
+            }).ToArray();
+            Draw(dc, overlayShapes, null, new Size(w, h));
+        }
         var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
         rtb.Render(dv);
         rtb.Freeze();
@@ -218,12 +229,12 @@ public class AnnotationRenderer
         double x, double y, double w, double h, Func<BitmapSource, BitmapSource> effect)
     {
         if (source == null || w < 1 || h < 1) return;
-        int ix = (int)Math.Round(x), iy = (int)Math.Round(y);
-        int iw = (int)Math.Round(w), ih = (int)Math.Round(h);
-        ix = Math.Clamp(ix, 0, Math.Max(0, source.PixelWidth - 1));
-        iy = Math.Clamp(iy, 0, Math.Max(0, source.PixelHeight - 1));
-        if (ix + iw > source.PixelWidth) iw = source.PixelWidth - ix;
-        if (iy + ih > source.PixelHeight) ih = source.PixelHeight - iy;
+        // Intersect both edges: moving only the origin shifts an off-canvas redaction onto
+        // unrelated content. Round outwards so fractional glyph edges are covered too.
+        int ix = (int)Math.Clamp(Math.Floor(x), 0, source.PixelWidth);
+        int iy = (int)Math.Clamp(Math.Floor(y), 0, source.PixelHeight);
+        int iw = (int)Math.Clamp(Math.Ceiling(x + w), 0, source.PixelWidth) - ix;
+        int ih = (int)Math.Clamp(Math.Ceiling(y + h), 0, source.PixelHeight) - iy;
         if (iw < 1 || ih < 1) return;
         var crop = new CroppedBitmap(source, new Int32Rect(ix, iy, iw, ih));
         var done = effect(crop);

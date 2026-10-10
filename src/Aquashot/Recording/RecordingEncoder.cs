@@ -12,8 +12,8 @@ public record GifOptions(int MaxFps, int MaxWidth, int Colors, string Dither)
     public static GifOptions Default => new(20, 800, 256, "sierra2_4a");
 }
 
-// Turns a recorded temp intermediate into the requested final files, enforcing the
-// size budget (MP4 via bitrate; GIF via fps/scale with one shrink-retry).
+// Turns a recorded temp intermediate into complete final files, targeting the size
+// budget (MP4 via bitrate; GIF via fps/scale with one shrink-retry). Reports any excess.
 public class RecordingEncoder
 {
     private readonly IFFmpegRunner _runner;
@@ -38,15 +38,18 @@ public class RecordingEncoder
         gif ??= GifOptions.Default;
         var files = new List<string>();
         bool capForced = false;
+        bool budgetExceeded = false;
 
         if (formats.HasFlag(RecordFormats.Mp4))
         {
             var mp4 = outBase + ".mp4";
             int kbps = SizeTargeter.BitrateKbps(duration, _videoBudget);
-            // Unlimited budget -> no -fs hard cap; otherwise leave ~1 MB headroom under the budget.
-            int? fsMb = _videoBudget >= long.MaxValue ? null : Math.Max(1, (int)(_videoBudget / (1024 * 1024)) - 1);
-            var r = await _runner.RunAsync(FFmpegArgs.Mp4Transcode(intermediate, encoder, kbps, mp4, overlayPng, fsMb, includeAudio));
+            // -fs stops encoding at the size limit, silently discarding the rest of the clip.
+            // Preserve every frame and report an excess when this bitrate cannot meet the budget.
+            var r = await _runner.RunAsync(FFmpegArgs.Mp4Transcode(intermediate, encoder, kbps, mp4,
+                overlayPng, maxFileSizeMb: null, includeAudio: includeAudio));
             if (!r.Ok) throw new InvalidOperationException("MP4 encode failed: " + r.StderrTail);
+            budgetExceeded |= SizeTargeter.OverBudget(_sizeOf(mp4), _videoBudget);
             files.Add(mp4);
         }
 
@@ -59,11 +62,12 @@ public class RecordingEncoder
             {
                 capForced = true;
                 await RenderGif(intermediate, SizeTargeter.Shrink(plan), gifPath, overlayPng, gif);
+                budgetExceeded |= SizeTargeter.OverBudget(_sizeOf(gifPath), _gifBudget);
             }
             files.Add(gifPath);
         }
 
-        return new RecordResult(files, capForced);
+        return new RecordResult(files, capForced, budgetExceeded);
     }
 
     private async Task RenderGif(string input, (int fps, int width) plan, string outGif, string? overlayPng, GifOptions gif)

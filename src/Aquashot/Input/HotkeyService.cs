@@ -77,6 +77,16 @@ public class HotkeyService : IDisposable
             UnregisterHotKey(_source.Handle, IdFor(action));
     }
 
+    public IReadOnlyDictionary<HotkeyAction, bool> RegisterAll(
+        IReadOnlyList<(HotkeyAction Action, string? Hotkey)> bindings)
+    {
+        // Release every old combo before registering new ones so actions can swap shortcuts.
+        foreach (var action in new List<HotkeyAction>(_registered)) Unregister(action);
+        var results = new Dictionary<HotkeyAction, bool>();
+        foreach (var (action, hotkey) in bindings) results[action] = Register(action, hotkey);
+        return results;
+    }
+
     // ---- Compatibility wrappers (keep existing TrayHost calls compiling) ----
 
     public bool Register(string hotkey) => Register(HotkeyAction.Capture, hotkey);
@@ -108,13 +118,14 @@ public class HotkeyService : IDisposable
         return IntPtr.Zero;
     }
 
-    public static (uint mods, uint vk) ParseHotkey(string hotkey)
+    public static (uint mods, uint vk) ParseHotkey(string? hotkey)
     {
+        if (string.IsNullOrWhiteSpace(hotkey)) return (0, 0);
         uint mods = 0, vk = 0;
         foreach (var partRaw in hotkey.Split('+'))
         {
             var part = partRaw.Trim();
-            if (part.Length == 0) continue;
+            if (part.Length == 0) return (0, 0);
             switch (part.ToLowerInvariant())
             {
                 case "ctrl": case "control": mods |= MOD_CONTROL; break;
@@ -122,8 +133,13 @@ public class HotkeyService : IDisposable
                 case "shift": mods |= MOD_SHIFT; break;
                 case "win": case "windows": mods |= MOD_WIN; break;
                 default:
-                    if (Enum.TryParse<Key>(part, true, out var key))
-                        vk = (uint)KeyInterop.VirtualKeyFromKey(key);
+                    if (vk != 0 || !Enum.TryParse<Key>(part, true, out var key)
+                        || !Enum.IsDefined(key) || !char.IsLetter(part[0])
+                        || key is Key.None or Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt
+                            or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
+                        return (0, 0);
+                    vk = (uint)KeyInterop.VirtualKeyFromKey(key);
+                    if (vk == 0) return (0, 0);
                     break;
             }
         }
