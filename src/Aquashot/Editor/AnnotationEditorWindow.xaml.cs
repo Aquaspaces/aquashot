@@ -81,8 +81,9 @@ public partial class AnnotationEditorWindow : Window
         _toolbar = new InlineToolbar();
         _toolbar.SetEditorMode();
         _toolbar.ToolChanged += OnToolChanged;
-        _toolbar.UndoRequested += () => { _doc.Undo(); ClearSelection(); _layer.Refresh(); };
-        _toolbar.RedoRequested += () => { _doc.Redo(); ClearSelection(); _layer.Refresh(); };
+        _doc.InitBase(source);
+        _toolbar.UndoRequested += Undo;
+        _toolbar.RedoRequested += Redo;
         _toolbar.PrimaryClicked += Save;
         _toolbar.CancelRequested += Close;
         _toolbar.EyedropperRequested += () => _sampling = true;
@@ -145,6 +146,7 @@ public partial class AnnotationEditorWindow : Window
                 _movingSelected = hit >= 0;
                 if (hit >= 0)
                 {
+                    _doc.BeginGesture(); // the whole drag is one undo step
                     _moveLastImg = (cx, cy);
                     _dragging = true;
                     Overlay.CaptureMouse();
@@ -201,6 +203,7 @@ public partial class AnnotationEditorWindow : Window
         if (_cropMode) { CropUp(e); return; }
         if (_toolbar.CurrentTool == ToolKind.Select)
         {
+            _doc.EndGesture();
             _movingSelected = false;
             _dragging = false;
             Overlay.ReleaseMouseCapture();
@@ -219,10 +222,7 @@ public partial class AnnotationEditorWindow : Window
             _doc.Add(new HighlightShape(_penPoints.ToArray(), _toolbar.CurrentColor,
                 _settings.HighlighterWidth, _settings.HighlighterOpacity));
         else if (preview is SpotlightShape sp)
-        {
-            _doc.RemoveAllOfType<SpotlightShape>();
-            _doc.Add(sp);
-        }
+            _doc.AddReplacing(sp);
         else if (preview != null)
             _doc.Add(preview);
         _penPoints = null;
@@ -307,8 +307,8 @@ public partial class AnnotationEditorWindow : Window
         }
         if (e.Key == Key.Escape) { Close(); return; }
         if (e.Key == Key.Enter) { Save(); return; }
-        if (e.Key == Key.Z && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc.Undo(); ClearSelection(); _layer.Refresh(); }
-        else if (e.Key == Key.Y && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc.Redo(); ClearSelection(); _layer.Refresh(); }
+        if (e.Key == Key.Z && (Keyboard.Modifiers & ModifierKeys.Control) != 0) Undo();
+        else if (e.Key == Key.Y && (Keyboard.Modifiers & ModifierKeys.Control) != 0) Redo();
         else if ((e.Key == Key.Delete || e.Key == Key.Back) && _selectedIndex >= 0)
         {
             _doc.RemoveAt(_selectedIndex);
@@ -427,20 +427,45 @@ public partial class AnnotationEditorWindow : Window
         var cropped = CropController.Apply(_source, clampedRect);
 
         var moved = CropController.TranslateShapes(_doc.Shapes, -clamped.X, -clamped.Y);
-        _doc.ReplaceAll(moved);
-
-        _source = cropped;
-        SourceImage.Source = cropped;
-        _layer.Source = cropped;
-        _layer.Width = cropped.PixelWidth;
-        _layer.Height = cropped.PixelHeight;
+        _doc.SetBase(cropped, moved); // one undo step restores both the image and the shapes
 
         ClearCropRect();
         _cropStart = null;
         _cropEndDip = null;
         _cropMode = false;
         _toolbar.ResetCropToggle();
-        Layout();
+        SyncSource();
+    }
+
+    private void Undo()
+    {
+        if (_cropMode || _redacting) return;
+        _doc.Undo();
+        ClearSelection();
+        SyncSource();
+    }
+
+    private void Redo()
+    {
+        if (_cropMode || _redacting) return;
+        _doc.Redo();
+        ClearSelection();
+        SyncSource();
+    }
+
+    // Show whichever image the document's current state uses (it changes on crop and its undo).
+    private void SyncSource()
+    {
+        if (_doc.Base is BitmapSource img && !ReferenceEquals(img, _source))
+        {
+            _source = img;
+            SourceImage.Source = img;
+            _layer.Source = img;
+            _layer.Width = img.PixelWidth;
+            _layer.Height = img.PixelHeight;
+            Layout();
+        }
+        _layer.Refresh();
     }
 
     private void CancelCrop()

@@ -594,6 +594,7 @@ public partial class OverlayWindow : Window
                 _movingSelected = hit >= 0;
                 if (hit >= 0)
                 {
+                    _doc.BeginGesture(); // the whole drag is one undo step
                     _moveLastCrop = (cx, cy);
                     _dragging = true;
                     Overlay.CaptureMouse();
@@ -694,6 +695,7 @@ public partial class OverlayWindow : Window
     {
         if (_toolbar!.CurrentTool == ToolKind.Select)
         {
+            _doc?.EndGesture();
             _movingSelected = false;
             _dragging = false;
             Overlay.ReleaseMouseCapture();
@@ -711,10 +713,7 @@ public partial class OverlayWindow : Window
             _doc!.Add(new HighlightShape(_penPoints.ToArray(), _toolbar.CurrentColor,
                 Settings.HighlighterWidth, Settings.HighlighterOpacity));
         else if (preview is SpotlightShape sp)
-        {
-            _doc!.RemoveAllOfType<SpotlightShape>(); // only one spotlight is meaningful
-            _doc.Add(sp);
-        }
+            _doc!.AddReplacing(sp); // only one spotlight is meaningful
         else if (preview != null)
             _doc!.Add(preview);
         _penPoints = null;

@@ -140,4 +140,116 @@ public class AnnotationDocumentTests
         doc.ReplaceAll(new Shape[] { new RectShape(1, 1, 2, 2, "#00FF00", 1), new RectShape(3, 3, 2, 2, "#00FF00", 1) });
         doc.Shapes.Should().HaveCount(2);
     }
+    [Fact]
+    public void Undo_RevertsAMove()
+    {
+        var doc = new AnnotationDocument();
+        doc.Add(Rect());
+        doc.MoveAt(0, 5, 5);
+        doc.Undo();
+        ((RectShape)doc.Shapes[0]).X.Should().Be(10);
+        doc.Redo();
+        ((RectShape)doc.Shapes[0]).X.Should().Be(15);
+    }
+
+    [Fact]
+    public void Gesture_GroupsADragIntoOneUndoStep()
+    {
+        var doc = new AnnotationDocument();
+        doc.Add(Rect());
+        doc.BeginGesture();
+        doc.MoveAt(0, 1, 0);
+        doc.MoveAt(0, 1, 0);
+        doc.MoveAt(0, 1, 0);
+        doc.EndGesture();
+        doc.Undo();
+        ((RectShape)doc.Shapes[0]).X.Should().Be(10);
+        doc.Shapes.Should().HaveCount(1); // the add is a separate step
+    }
+
+    [Fact]
+    public void Gesture_WithoutChangesLeavesNoUndoEntry()
+    {
+        var doc = new AnnotationDocument();
+        doc.Add(Rect());
+        doc.BeginGesture();
+        doc.MoveAt(0, 0, 0);
+        doc.EndGesture();
+        doc.Undo();
+        doc.Shapes.Should().BeEmpty(); // undid the add, not an empty move
+    }
+
+    [Fact]
+    public void Edits_AfterAnUnfinishedGestureAreSeparateSteps()
+    {
+        var doc = new AnnotationDocument();
+        doc.Add(Rect());
+        doc.BeginGesture();
+        doc.MoveAt(0, 5, 0);   // mouse-up never arrives
+        doc.Add(Rect());
+        doc.Add(Rect());
+        doc.Undo();
+        doc.Shapes.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void Undo_RestoresADeletedShapeInPlace()
+    {
+        var doc = new AnnotationDocument();
+        doc.Add(new RectShape(0, 0, 1, 1, "#FF0000", 1));
+        doc.Add(new RectShape(5, 5, 1, 1, "#00FF00", 1));
+        doc.RemoveAt(0);
+        doc.Undo();
+        doc.Shapes.Should().HaveCount(2);
+        ((RectShape)doc.Shapes[0]).Color.Should().Be("#FF0000");
+    }
+
+    [Fact]
+    public void AddReplacing_IsOneStepThatRestoresThePreviousSpotlight()
+    {
+        var doc = new AnnotationDocument();
+        doc.Add(new SpotlightShape(0, 0, 10, 10, "#A6000000"));
+        doc.AddReplacing(new SpotlightShape(1, 1, 10, 10, "#A6000000"));
+        doc.Shapes.OfType<SpotlightShape>().Should().ContainSingle().Which.X.Should().Be(1);
+        doc.Undo();
+        doc.Shapes.OfType<SpotlightShape>().Should().ContainSingle().Which.X.Should().Be(0);
+    }
+
+    [Fact]
+    public void SetBase_UndoRestoresImageAndShapes()
+    {
+        var doc = new AnnotationDocument();
+        var original = new object();
+        var cropped = new object();
+        doc.InitBase(original);
+        doc.Add(new RectShape(10, 10, 5, 5, "#FF0000", 1));
+        doc.SetBase(cropped, new Shape[] { new RectShape(0, 0, 5, 5, "#FF0000", 1) });
+        doc.Base.Should().BeSameAs(cropped);
+        doc.Undo();
+        doc.Base.Should().BeSameAs(original);
+        ((RectShape)doc.Shapes[0]).X.Should().Be(10);
+        doc.Redo();
+        doc.Base.Should().BeSameAs(cropped);
+    }
+
+    [Fact]
+    public void Undo_RestoresTheCounterSequence()
+    {
+        var doc = new AnnotationDocument();
+        doc.Add(new CounterShape(0, 0, doc.NextCounter(), "#FF0000", 1));
+        doc.Add(new CounterShape(0, 0, doc.NextCounter(), "#FF0000", 1));
+        doc.Undo();
+        doc.NextCounter().Should().Be(2);
+    }
+
+    [Fact]
+    public void TranslateAll_RebasesHistorySoUndoKeepsScreenPosition()
+    {
+        var doc = new AnnotationDocument();
+        doc.Add(new RectShape(10, 10, 5, 5, "#FF0000", 1));
+        doc.MoveAt(0, 10, 0);       // x = 20
+        doc.TranslateAll(-5, 0);    // region origin moved right by 5: x = 15
+        doc.Undo();
+        ((RectShape)doc.Shapes[0]).X.Should().Be(5); // the pre-move 10, re-based by -5
+    }
 }
