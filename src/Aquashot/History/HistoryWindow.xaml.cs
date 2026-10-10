@@ -158,6 +158,10 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         BtnPrev.Click += (_, __) => StepDetail(-1);
         BtnNext.Click += (_, __) => StepDetail(+1);
         BtnClose.Click += (_, __) => CloseDetail();
+        DetailVideo.MediaEnded += (_, __) => { DetailVideo.Position = TimeSpan.Zero; DetailVideo.Play(); };
+        DetailVideo.MediaFailed += (_, __) => StopVideo(); // no decoder: the poster frame stays visible
+        DetailVideo.MediaOpened += (_, __) => DetailVideo.Visibility = Visibility.Visible;
+        DetailVideo.MouseLeftButtonUp += (_, __) => ToggleVideo();
         BtnCopyText.Click += (_, __) => CopyAllText();
         BtnCopyImage.Click += (_, __) => CopyCurrentImage();
         BtnShare.Click += (_, __) => ShareCurrent();
@@ -253,6 +257,7 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
     {
         if (index < 0 || index >= _filtered.Count) return;
         StopHover();
+        StopVideo();
         _detailIndex = index;
         var tile = _filtered[index];
         DetailTitle.Text = $"{tile.Name}   {tile.Date}";
@@ -278,7 +283,13 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         if (index < 0 || index >= _filtered.Count) return;
         var tile = _filtered[index];
 
-        if (tile.IsGif)
+        if (tile.IsVideo)
+        {
+            // Shown once the media opens, so a missing decoder leaves the poster frame in place.
+            DetailVideo.Source = new Uri(tile.Path);
+            DetailVideo.Play();
+        }
+        else if (tile.IsGif)
         {
             var gpath = tile.Path;
             var clip = await Task.Run(() => GifAnimator.Load(gpath)); // decode frames off the UI thread
@@ -373,7 +384,25 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         DetailPanel.Visibility = Visibility.Collapsed;
         Grid.Visibility = Visibility.Visible;
         _detailIndex = -1;
+        StopVideo();
         Overlay.SetImage(null); // release the detail bitmap and stop GIF playback
+    }
+
+    private bool _videoPaused;
+
+    private void StopVideo()
+    {
+        DetailVideo.Stop();
+        DetailVideo.Source = null; // releases the file so it can be deleted or renamed
+        DetailVideo.Visibility = Visibility.Collapsed;
+        _videoPaused = false;
+    }
+
+    private void ToggleVideo()
+    {
+        if (DetailVideo.Source == null) return;
+        if (_videoPaused) DetailVideo.Play(); else DetailVideo.Pause();
+        _videoPaused = !_videoPaused;
     }
 
     protected override void OnClosed(EventArgs e)
@@ -778,6 +807,8 @@ public partial class HistoryWindow : Window, INotifyPropertyChanged
         if (ok != MessageBoxResult.Yes) return;
         try
         {
+            if (string.Equals(DetailVideo.Source?.LocalPath, t.Path, StringComparison.OrdinalIgnoreCase))
+                StopVideo(); // playback holds the file open
             File.Delete(t.Path);
             _lib.Remove(t.Path);
         }

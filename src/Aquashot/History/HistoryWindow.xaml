@@ -151,7 +151,13 @@
           </ListBox>
         </Border>
 
-        <h:OcrTextOverlay x:Name="Overlay"/>
+        <Grid>
+          <h:OcrTextOverlay x:Name="Overlay"/>
+          <!-- Recordings play here; the overlay keeps showing the poster frame until playback starts. -->
+          <MediaElement x:Name="DetailVideo" Visibility="Collapsed" Stretch="Uniform"
+                        LoadedBehavior="Manual" UnloadedBehavior="Close" ScrubbingEnabled="True"
+                        ToolTip="Click to pause or play"/>
+        </Grid>
       </DockPanel>
     </Grid>
   </DockPanel>
