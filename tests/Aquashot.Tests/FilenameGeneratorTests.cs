@@ -64,6 +64,19 @@ public class FilenameGeneratorTests
     }
 
     [Fact]
+    public void Generate_DoesNotInterpretBracesInTokenValues()
+    {
+        FilenameGenerator.Generate("{window}_{app}_{yyyy}", "png", Ts, "notes {yyyy} {q}", "{app}")
+            .Should().Be("notes {yyyy} {q}_{app}_2026.png");
+    }
+
+    [Fact]
+    public void Generate_InvalidDateFormatRemainsLiteral()
+    {
+        FilenameGenerator.Generate("Shot_{q}", "png", Ts).Should().Be("Shot_{q}.png");
+    }
+
+    [Fact]
     public void Sanitize_CollapsesWhitespaceAndTrims()
     {
         FilenameGenerator.Sanitize("  a   b\tc  ").Should().Be("a b c");

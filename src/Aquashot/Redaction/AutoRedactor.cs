@@ -62,7 +62,8 @@ public static class AutoRedactor
         {
             var pat = raw.Trim();
             if (pat.Length == 0) continue;
-            try { list.Add(new Regex(pat, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)); }
+            try { list.Add(new Regex(pat, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+                TimeSpan.FromMilliseconds(100))); }
             catch { /* skip invalid regex (best-effort, never throw) */ }
         }
         return list;
@@ -70,6 +71,8 @@ public static class AutoRedactor
 
     private static bool SafeMatch(Regex rx, string text)
     {
-        try { return rx.IsMatch(text ?? ""); } catch { return false; }
+        try { return rx.IsMatch(text ?? ""); }
+        // A slow pattern must not freeze the editor or leave uncertain text exposed.
+        catch (RegexMatchTimeoutException) { return true; }
     }
 }

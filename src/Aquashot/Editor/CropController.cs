@@ -16,13 +16,9 @@ public static class CropController
     {
         int x = Math.Clamp((int)Math.Round(crop.X), 0, Math.Max(0, srcW - 1));
         int y = Math.Clamp((int)Math.Round(crop.Y), 0, Math.Max(0, srcH - 1));
-        int w = (int)Math.Round(crop.Width);
-        int h = (int)Math.Round(crop.Height);
-        if (w < 1) w = 1;
-        if (h < 1) h = 1;
-        if (x + w > srcW) w = srcW - x;
-        if (y + h > srcH) h = srcH - y;
-        w = Math.Max(1, w); h = Math.Max(1, h);
+        int right = (int)Math.Clamp(Math.Round(crop.Right), 0, srcW);
+        int bottom = (int)Math.Clamp(Math.Round(crop.Bottom), 0, srcH);
+        int w = Math.Max(1, right - x), h = Math.Max(1, bottom - y);
         return new Int32Rect(x, y, w, h);
     }
 

@@ -44,6 +44,13 @@ public class CropControllerTests
     }
 
     [Fact]
+    public void Clamp_IntersectsNegativeOriginInsteadOfMovingTheCrop()
+    {
+        CropController.Clamp(100, 80, new PixelRect(-10, -5, 30, 20))
+            .Should().Be(new Int32Rect(0, 0, 20, 15));
+    }
+
+    [Fact]
     public void Clamp_ClampsWidthHeightToRemainingSpace()
     {
         var r = CropController.Clamp(100, 100, new PixelRect(90, 90, 50, 50));

@@ -29,6 +29,7 @@ public class TrayHost : IDisposable
     private readonly SettingsStore _store;
     private readonly GraphicsCaptureService _capture = new();
     private readonly OutputService _output = new();
+    private readonly CapturePipeline _pipeline;
     private AppSettings _settings;
     private bool _busy;
     private readonly CaptureLibrary _library;
@@ -51,6 +52,7 @@ public class TrayHost : IDisposable
         _library = new CaptureLibrary(Path.Combine(settingsDir, "library.json"),
             _settings.HistoryCap, Path.Combine(settingsDir, "recent.json"));
         _ocrIndexer = new OcrIndexer(_library, _ocrService);
+        _pipeline = new CapturePipeline(_output, _ocrService);
 
         _icon = new NotifyIcon
         {
@@ -80,10 +82,7 @@ public class TrayHost : IDisposable
 
         _hotkey = new HotkeyService();
         _hotkey.ActionPressed += OnHotkeyAction;
-        if (!RegisterHotkeys())
-            _icon.ShowBalloonTip(3000, "Aquashot",
-                $"Could not register hotkey '{_settings.Hotkey}'. Open Settings to change it.",
-                ToolTipIcon.Warning);
+        RegisterHotkeys();
 
         if (HotkeyService.IsPrtScMappedToSnip())
             _icon.ShowBalloonTip(4000, "Aquashot",
@@ -92,8 +91,7 @@ public class TrayHost : IDisposable
     }
 
     // Register every configured global hotkey (called on startup and after a settings save).
-    // Returns whether the main capture hotkey registered successfully (a non-blank combo that took).
-    private bool RegisterHotkeys()
+    private void RegisterHotkeys()
     {
         var combos = new (HotkeyAction Action, string? Hotkey)[]
         {
@@ -106,30 +104,30 @@ public class TrayHost : IDisposable
             (HotkeyAction.CaptureFullScreen, _settings.CaptureFullScreenHotkey),
         };
 
-        bool capture = false;
+        var registrations = _hotkey.RegisterAll(combos);
         // Track which (mods,vk) combo each action wants so we can name cross-action conflicts: when a
         // non-blank combo fails to register because another action already holds it, warn the user.
         var seen = new Dictionary<(uint mods, uint vk), HotkeyAction>();
         var conflicts = new List<string>();
         foreach (var (action, hotkey) in combos)
         {
-            bool ok = _hotkey.Register(action, hotkey);
-            if (action == HotkeyAction.Capture) capture = ok;
+            bool ok = registrations[action];
             if (string.IsNullOrWhiteSpace(hotkey)) continue;
             var (mods, vk) = HotkeyService.ParseHotkey(hotkey!);
-            if (vk == 0) continue; // unparseable combo, not a duplicate
-            if (!ok && seen.TryGetValue((mods, vk), out var owner))
-                conflicts.Add($"{action} conflicts with {owner} ({hotkey!.Trim()})");
+            if (!ok)
+                conflicts.Add(vk == 0 ? $"{action}: invalid shortcut ({hotkey!.Trim()})"
+                    : seen.TryGetValue((mods, vk), out var owner)
+                        ? $"{action} conflicts with {owner} ({hotkey!.Trim()})"
+                        : $"{action}: shortcut unavailable ({hotkey!.Trim()})");
             else if (ok)
                 seen[(mods, vk)] = action;
         }
 
         if (conflicts.Count > 0)
             _icon.ShowBalloonTip(4000, "Aquashot",
-                "Some hotkeys clash and were not all registered:\n" + string.Join("\n", conflicts) +
+                "Some hotkeys could not be registered:\n" + string.Join("\n", conflicts) +
                 "\nChange them in Settings.", ToolTipIcon.Warning);
 
-        return string.IsNullOrWhiteSpace(_settings.Hotkey) || capture; // a blank main hotkey isn't an error
     }
 
     // Dispatch a pressed global hotkey to its action.
@@ -149,7 +147,7 @@ public class TrayHost : IDisposable
 
     // LAST-REGION: re-capture the last committed region immediately (no overlay) and save+copy it,
     // exactly like a normal region capture. No-op (with a hint) until a region has been captured.
-    private void RepeatLastRegion()
+    private async void RepeatLastRegion()
     {
         if (_freeze.IsActive) _freeze.Resume();
         if (_busy) return;
@@ -161,23 +159,50 @@ public class TrayHost : IDisposable
         _busy = true;
         try
         {
-            var frames = _capture.FreezeAll();
-            var frame = frames.FirstOrDefault(f => MonitorContains(f.Monitor.Bounds, region))
-                        ?? frames.FirstOrDefault();
-            if (frame == null) return;
-            var path = _output.Save(frame, region, new AnnotationDocument(), _settings, DateTime.Now,
-                ParseClipboardAction(_settings.DefaultClipboardAction),
-                ForegroundWindow.Title(), ForegroundWindow.AppName());
-            Remember(path);
-            ShareAfterSave(path);
-            _icon.ShowBalloonTip(2000, "Aquashot", "Repeated last region: " + path, ToolTipIcon.Info);
+            var job = RegionJob(_capture.FreezeAll(), region, ForegroundWindow.Title(), ForegroundWindow.AppName());
+            if (job == null) return;
+            NotifySaved("Last region saved", job.Clip, await SaveAndIndexAsync(job));
         }
-        catch (Exception ex)
-        {
-            _icon.ShowBalloonTip(3000, "Aquashot", "Repeat failed: " + ex.Message, ToolTipIcon.Error);
-        }
+        catch (Exception ex) { NotifyFailed("Repeat capture", ex); }
         finally { _busy = false; }
     }
+
+    // A plain region capture (no annotations) from whichever monitor holds the region's centre.
+    private CaptureJob? RegionJob(IReadOnlyList<CapturedFrame> frames, PixelRect region,
+        string windowTitle, string appName)
+    {
+        var frame = frames.FirstOrDefault(f => MonitorContains(f.Monitor.Bounds, region))
+                    ?? frames.FirstOrDefault();
+        if (frame == null) return null;
+        return new CaptureJob(frame.Bitmap, OutputService.LocalCrop(frame, region), Array.Empty<Shape>(),
+            ParseClipboardAction(_settings.DefaultClipboardAction), windowTitle, appName);
+    }
+
+    // Every still capture ends here: the shared pipeline (auto-redact, flatten, write, clipboard),
+    // then history, OCR indexing, and auto-share. Throws on failure; nothing is indexed then.
+    private async Task<string> SaveAndIndexAsync(CaptureJob job)
+    {
+        var path = await _pipeline.SaveAsync(job, _settings, DateTime.Now);
+        Remember(path);
+        ShareAfterSave(path);
+        return path;
+    }
+
+    private void NotifySaved(string label, ClipboardMode clip, string path)
+    {
+        var copied = clip switch
+        {
+            ClipboardMode.None => "",
+            ClipboardMode.File => " & file copied",
+            ClipboardMode.Path => " & path copied",
+            _                  => " & copied",
+        };
+        _icon.ShowBalloonTip(2000, "Aquashot", label + copied + ": " + path, ToolTipIcon.Info);
+    }
+
+    private void NotifyFailed(string what, Exception ex) =>
+        _icon.ShowBalloonTip(3000, "Aquashot",
+            ex is AutoRedactException ? ex.Message : what + " failed: " + ex.Message, ToolTipIcon.Error);
 
     // Freeze the desktop into a static, always-on-top snapshot (looks paused); toggle to resume.
     private void ToggleFreeze()
@@ -210,7 +235,7 @@ public class TrayHost : IDisposable
             ctrl = new OverlayController { Mode = mode };
             ctrl.DefaultClip = ParseClipboardAction(_settings.DefaultClipboardAction);
             ctrl.Settings = _settings;                            // highlighter/spotlight/redact options
-            ctrl.Ocr = _settings.EnableOcr ? _ocrService : null;  // enable the auto-redact button when OCR is on
+            ctrl.Ocr = _ocrService;                               // manual redact button (independent of indexing)
             ctrl.Refreeze = () => _capture.FreezeAll();           // re-snapshot for the freeze toggle
             ctrl.DelayedCapture += (region, secs) => DelayedRegionCapture(region, secs);
             // LAST-REGION: persist the committed selection so the repeat hotkey can replay it.
@@ -218,39 +243,16 @@ public class TrayHost : IDisposable
             ctrl.Confirmed += (f, r, d, clip) =>
             {
                 // The overlay is already closed by OverlayController before this fires, but WPF
-                // hasn't repainted yet — the synchronous Save (PNG encode + clipboard + disk) would
-                // block the render and leave the dimmed overlay on screen. Defer the save to a
-                // Background dispatcher pass so the close paints first; capture feels instant.
-                // Keep _busy until the save completes so a fast second capture can't collide on the
-                // same-second filename.
+                // hasn't repainted yet. Start the save in a Background dispatcher pass so the close
+                // paints first. _busy is held until the save completes.
+                var job = new CaptureJob(f.Bitmap, OutputService.LocalCrop(f, r), d.Shapes.ToList(), clip,
+                    _capWindowTitle, _capAppName);
                 Application.Current.Dispatcher.BeginInvoke(
                     System.Windows.Threading.DispatcherPriority.Background,
                     new Action(async () =>
                     {
-                        try
-                        {
-                            // AUTO-REDACT: when enabled, OCR the composed crop and append blur/pixelate
-                            // shapes over (matching) text lines before the flatten+save below.
-                            if (_settings.AutoRedactEnabled && _settings.EnableOcr)
-                                await ApplyAutoRedactAsync(f, r, d);
-
-                            var path = _output.Save(f, r, d, _settings, DateTime.Now, clip,
-                                _capWindowTitle, _capAppName);
-                            Remember(path);
-                            ShareAfterSave(path); // auto-upload + copy link when enabled
-                            var note = clip switch
-                            {
-                                ClipboardMode.None => "Saved: " + path,
-                                ClipboardMode.File => "Saved & file copied: " + path,
-                                ClipboardMode.Path => "Saved & path copied: " + path,
-                                _                  => "Saved & copied: " + path,
-                            };
-                            _icon.ShowBalloonTip(2000, "Aquashot", note, ToolTipIcon.Info);
-                        }
-                        catch (Exception ex)
-                        {
-                            _icon.ShowBalloonTip(3000, "Aquashot", "Save failed: " + ex.Message, ToolTipIcon.Error);
-                        }
+                        try { NotifySaved("Saved", clip, await SaveAndIndexAsync(job)); }
+                        catch (Exception ex) { NotifyFailed("Save", ex); }
                         finally { _busy = false; }
                     }));
             };
@@ -261,16 +263,19 @@ public class TrayHost : IDisposable
             // background thread, so both callbacks marshal back to the UI thread before touching
             // _icon/_library/_busy.
             var recorder = new Aquashot.Recording.RecordingController(_settings);
+            bool encodingStarted = false;
             recorder.EncodingStarted += () =>
                 Application.Current.Dispatcher.BeginInvoke(new Action(() =>
                 {
+                    encodingStarted = true;
                     _busy = false; // encoding off-screen; allow a new capture while it runs
                     _icon.ShowBalloonTip(1500, "Aquashot", "Encoding…", ToolTipIcon.Info);
                 }));
             recorder.Finished += (result, error) =>
                 Application.Current.Dispatcher.BeginInvoke(new Action(() =>
                 {
-                    _busy = false;
+                    // An earlier background encode must not unlock a newer capture.
+                    if (!encodingStarted) _busy = false;
                     if (error != null)
                         _icon.ShowBalloonTip(3000, "Aquashot", error, ToolTipIcon.Error);
                     else if (result != null)
@@ -280,10 +285,12 @@ public class TrayHost : IDisposable
                         var shareFile = result.Files.FirstOrDefault(f =>
                             f.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)) ?? result.Files.FirstOrDefault();
                         if (shareFile != null) ShareAfterSave(shareFile);
-                        var note = result.SizeCapForced ? $" (reduced to fit {_settings.MaxGifSizeMb} MB)" : "";
+                        var note = result.SizeBudgetExceeded
+                            ? " (size target exceeded; full recording preserved)"
+                            : result.SizeCapForced ? " (GIF quality reduced for size target)" : "";
                         _icon.ShowBalloonTip(2500, "Aquashot",
-                            "Saved & copied: " + string.Join(", ", result.Files.Select(Path.GetFileName)) + note,
-                            ToolTipIcon.Info);
+                            "Recording saved: " + string.Join(", ", result.Files.Select(Path.GetFileName)) + note,
+                            result.SizeBudgetExceeded ? ToolTipIcon.Warning : ToolTipIcon.Info);
                         // Non-fatal: tell the user if a requested audio source was silently skipped.
                         if (!string.IsNullOrEmpty(recorder.AudioWarning))
                             _icon.ShowBalloonTip(3000, "Aquashot", recorder.AudioWarning, ToolTipIcon.Warning);
@@ -300,30 +307,9 @@ public class TrayHost : IDisposable
         }
     }
 
-    // AUTO-REDACT: compose the crop to a temp PNG, OCR it (lines in crop-local px), then append
-    // blur/pixelate shapes to the document so they flatten into the saved image. Best-effort.
-    private async Task ApplyAutoRedactAsync(CapturedFrame f, PixelRect r, AnnotationDocument d)
+    private async void CaptureAllMonitors()
     {
-        string? temp = null;
-        try
-        {
-            var crop = _output.Compose(f, r, new AnnotationDocument()); // base pixels only, no shapes
-            if (crop.CanFreeze && !crop.IsFrozen) crop.Freeze();
-            temp = Path.Combine(Path.GetTempPath(), "aqua-redact-" + Guid.NewGuid().ToString("N") + ".png");
-            File.WriteAllBytes(temp, _output.Encode(crop, "png"));
-
-            var lines = await _ocrService.RecognizeLinesAsync(temp);
-            var chosen = Aquashot.Redaction.AutoRedactor.SelectLines(lines, _settings.RedactPatterns);
-            var shapes = Aquashot.Redaction.AutoRedactor.BuildShapes(chosen, 0, 0,
-                _settings.RedactStyle, _settings.RedactBlurRadius, _settings.RedactPixelateBlock);
-            if (shapes.Count > 0) d.AddRange(shapes);
-        }
-        catch { /* never break a save */ }
-        finally { if (temp != null) try { File.Delete(temp); } catch { } }
-    }
-
-    private void CaptureAllMonitors()
-    {
+        if (_freeze.IsActive) _freeze.Resume();
         if (_busy) return;
         _busy = true;
         try
@@ -331,15 +317,11 @@ public class TrayHost : IDisposable
             var frames = _capture.FreezeAll();
             var monitors = frames.Select(f => f.Monitor).ToList();
             var composite = DesktopStitcher.Stitch(frames, new VirtualDesktop(monitors).Bounds);
-            var path = _output.SaveComposite(composite, _settings, DateTime.Now);
-            Remember(path);
-            ShareAfterSave(path);
-            _icon.ShowBalloonTip(2000, "Aquashot", "All monitors saved & copied: " + path, ToolTipIcon.Info);
+            var job = CaptureJob.Whole(composite, ParseClipboardAction(_settings.DefaultClipboardAction),
+                ForegroundWindow.Title(), ForegroundWindow.AppName());
+            NotifySaved("All monitors saved", job.Clip, await SaveAndIndexAsync(job));
         }
-        catch (Exception ex)
-        {
-            _icon.ShowBalloonTip(3000, "Aquashot", "Capture failed: " + ex.Message, ToolTipIcon.Error);
-        }
+        catch (Exception ex) { NotifyFailed("Capture", ex); }
         finally { _busy = false; }
     }
 
@@ -351,18 +333,18 @@ public class TrayHost : IDisposable
         if (_freeze.IsActive) _freeze.Resume();
         if (_busy) return;
         _busy = true;
+        string title = ForegroundWindow.Title(), app = ForegroundWindow.AppName(); // before the picker takes focus
+        var clip = ParseClipboardAction(_settings.DefaultClipboardAction);
         try
         {
             var controller = new Aquashot.Capture.ScrollingCapture.ScrollingCaptureController(
-                _capture, _settings,
-                image => { var p = _output.SaveComposite(image, _settings, DateTime.Now); Remember(p); return p; });
+                _capture, _settings, image => SaveAndIndexAsync(CaptureJob.Whole(image, clip, title, app)));
 
             var result = await controller.RunAsync();
             switch (result.Kind)
             {
                 case Aquashot.Capture.ScrollingCapture.ScrollResultKind.Saved:
-                    _icon.ShowBalloonTip(2500, "Aquashot",
-                        $"Scrolling capture saved ({result.Frames} frames): " + result.Path, ToolTipIcon.Info);
+                    NotifySaved($"Scrolling capture saved ({result.Frames} frames)", clip, result.Path!);
                     break;
                 case Aquashot.Capture.ScrollingCapture.ScrollResultKind.NothingCaptured:
                     _icon.ShowBalloonTip(2000, "Aquashot", "Scrolling capture: nothing captured.", ToolTipIcon.Warning);
@@ -370,10 +352,7 @@ public class TrayHost : IDisposable
                 // Cancelled: stay quiet.
             }
         }
-        catch (Exception ex)
-        {
-            _icon.ShowBalloonTip(3000, "Aquashot", "Scrolling capture failed: " + ex.Message, ToolTipIcon.Error);
-        }
+        catch (Exception ex) { NotifyFailed("Scrolling capture", ex); }
         finally { _busy = false; }
     }
 
@@ -384,23 +363,14 @@ public class TrayHost : IDisposable
     {
         // _busy is still held from StartCapture; keep it until the deferred save finishes.
         _icon.ShowBalloonTip(1000, "Aquashot", $"Capturing in {seconds}s…", ToolTipIcon.Info);
-        await Task.Delay(seconds * 1000);
         try
         {
-            var frames = _capture.FreezeAll();
-            var frame = frames.FirstOrDefault(f => MonitorContains(f.Monitor.Bounds, region))
-                        ?? frames.FirstOrDefault();
-            if (frame == null) return;
-            var path = _output.Save(frame, region, new AnnotationDocument(), _settings, DateTime.Now,
-                ClipboardMode.Image, _capWindowTitle, _capAppName);
-            Remember(path);
-            ShareAfterSave(path);
-            _icon.ShowBalloonTip(2000, "Aquashot", "Saved & copied: " + path, ToolTipIcon.Info);
+            await Task.Delay(seconds * 1000);
+            var job = RegionJob(_capture.FreezeAll(), region, _capWindowTitle, _capAppName);
+            if (job == null) return;
+            NotifySaved("Saved", job.Clip, await SaveAndIndexAsync(job));
         }
-        catch (Exception ex)
-        {
-            _icon.ShowBalloonTip(3000, "Aquashot", "Delayed capture failed: " + ex.Message, ToolTipIcon.Error);
-        }
+        catch (Exception ex) { NotifyFailed("Delayed capture", ex); }
         finally { _busy = false; }
     }
 
@@ -426,7 +396,8 @@ public class TrayHost : IDisposable
         var encoded = Aquashot.Selection.RegionCodec.Encode(region);
         if (encoded == _settings.LastRegion) return;
         _settings = _settings with { LastRegion = encoded };
-        _store.Save(_settings);
+        try { _store.Save(_settings); }
+        catch (Exception ex) { Debug.WriteLine("[Aquashot] could not persist last region: " + ex.Message); }
     }
 
     private void Remember(string path)
@@ -448,8 +419,10 @@ public class TrayHost : IDisposable
         var settings = _settings; // snapshot for the background task
         _ = Task.Run(async () =>
         {
-            var result = await uploader.UploadAsync(path, settings);
-            Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+            Aquashot.Share.ShareResult result;
+            try { result = await uploader.UploadAsync(path, settings); }
+            catch (Exception ex) { result = Aquashot.Share.ShareResult.Failure(ex.Message); }
+            _ = Application.Current.Dispatcher.BeginInvoke(new Action(() =>
             {
                 if (result.Ok && result.Url != null)
                 {
@@ -483,7 +456,8 @@ public class TrayHost : IDisposable
                 _store.Save(_settings);
             },
             // Re-annotate: persist the flattened bitmap as a NEW file, then index it like a capture.
-            img => { var p = _output.SaveComposite(img, _settings, DateTime.Now); Remember(p); return p; },
+            img => { var p = _output.SaveComposite(img, _settings, DateTime.Now,
+                ParseClipboardAction(_settings.DefaultClipboardAction)); Remember(p); return p; },
             _settings); // highlighter/spotlight/redact options for the re-annotation editor
         _historyWindow.Show();
         if (openPath != null)
@@ -532,8 +506,14 @@ public class TrayHost : IDisposable
         if (win.ShowDialog() == true)
         {
             // Preserve the remembered last-region across a save (SettingsWindow doesn't surface it).
-            _settings = win.Result with { LastRegion = _settings.LastRegion };
-            _store.Save(_settings);
+            var settings = win.Result with { LastRegion = _settings.LastRegion };
+            try { _store.Save(settings); }
+            catch (Exception ex)
+            {
+                _icon.ShowBalloonTip(3000, "Aquashot", "Could not save settings: " + ex.Message, ToolTipIcon.Error);
+                return;
+            }
+            _settings = settings;
             RegisterHotkeys();
             // Push the fresh settings into an already-open history window so it doesn't keep using a
             // stale snapshot (sharing/OCR/save-folder/re-annotate) until it's closed and re-opened.
@@ -543,7 +523,6 @@ public class TrayHost : IDisposable
 
     private void Quit()
     {
-        Dispose();
         Application.Current.Shutdown();
     }
 

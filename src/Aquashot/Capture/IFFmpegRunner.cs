@@ -14,6 +14,9 @@ public record FFmpegResult(int ExitCode, string StderrTail)
 public interface IFFmpegSession
 {
     Task<FFmpegResult> StopAsync();
+
+    // Completes when the process exits for any reason, including a crash mid-recording.
+    Task Exited { get; }
 }
 
 public interface IFFmpegRunner

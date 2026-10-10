@@ -10,7 +10,11 @@ whatever you want with it.
 Aquashot does **not** include `ffmpeg.exe` in this repository. The screen
 recording feature is optional and inert unless an `ffmpeg.exe` is present at
 `src/Aquashot/Resources/ffmpeg.exe` (git-ignored). `scripts/fetch-ffmpeg.ps1`
-downloads a prebuilt **GPL** FFmpeg build (it includes libx264).
+downloads a prebuilt **GPL** FFmpeg build (it includes libx264): the gyan.dev
+"essentials" static build, with the version and SHA-256 pinned in the script.
+Its corresponding source is the matching FFmpeg release
+(https://ffmpeg.org/releases/) plus gyan.dev's build configuration
+(https://www.gyan.dev/ffmpeg/builds/).
 
 This has a licensing consequence you must respect if you redistribute binaries:
 

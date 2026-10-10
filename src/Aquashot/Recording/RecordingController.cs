@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using Aquashot.Capture;
@@ -14,6 +15,7 @@ namespace Aquashot.Recording;
 public class RecordingController
 {
     private readonly AppSettings _settings;
+    private readonly Action<string, ClipboardMode> _copyToClipboard;
     private IFFmpegRunner? _runner;
     private HardwareEncoderDetector? _detector;
 
@@ -24,11 +26,12 @@ public class RecordingController
     private string _encoderName = "libx264";
     private PixelRect _region;
     private RecordFormats _formats = RecordFormats.Mp4;
-    private DateTime _startedUtc;
+    private readonly Stopwatch _clock = new();
     private bool _stopping;
 
     private TimeSpan _captureDuration;
     private string _outBase = "";
+    private FileStream? _outputReservation;
     private FFmpegResult? _capResult;
     private bool _hasAudio;          // a live audio track was captured -> carry it through the encode
 
@@ -49,26 +52,39 @@ public class RecordingController
     // The recorded (kept) clip length after stop — what the trim dialog scrubs over. Falls back to
     // the full capture duration when there were no pauses.
     public TimeSpan RecordedDuration =>
-        Keep is { Count: > 0 } k ? TimeSpan.FromSeconds(KeptSeconds(k)) : _captureDuration;
+        Keep is { } k ? TimeSpan.FromSeconds(KeptSeconds(k)) : _captureDuration;
 
     // Apply a user trim over the RECORDED timeline (0..RecordedDuration): map [start,end] back onto
     // the kept spans so paused gaps stay dropped, then store the resulting spans as Keep.
     public void SetTrim(double startSec, double endSec)
     {
-        var basis = Keep is { Count: > 0 } k ? k : new[] { (0.0, _captureDuration.TotalSeconds) };
+        var basis = Keep ?? new[] { (0.0, _captureDuration.TotalSeconds) };
         Keep = IntersectTrim(basis, startSec, endSec);
     }
 
     // result (null on error), error (null on success)
     public event Action<RecordResult?, string?>? Finished;
 
+    // Fired on a pool thread when FFmpeg exits by itself while recording (a device or encoder
+    // failed). The host should stop the recording; the stop path then reports FFmpeg's error.
+    public event Action? CaptureEnded;
+
+    // True once FFmpeg exited before the recording was stopped.
+    public bool CaptureEndedEarly { get; private set; }
+
     // Fired when the (slow) background encode begins — lets the host free its busy flag and
     // show an "Encoding…" notice while the user can already start another capture.
     public event Action? EncodingStarted;
 
-    public RecordingController(AppSettings settings) => _settings = settings;
+    public RecordingController(AppSettings settings, IFFmpegRunner? runner = null,
+        Action<string, ClipboardMode>? copyToClipboard = null)
+    {
+        _settings = settings;
+        _runner = runner;
+        _copyToClipboard = copyToClipboard ?? CopyToClipboard;
+    }
 
-    private double NowSec => (DateTime.UtcNow - _startedUtc).TotalSeconds;
+    private double NowSec => _clock.Elapsed.TotalSeconds;
 
     // Recorded (un-paused) elapsed time — the on-screen timer should exclude paused spans.
     public TimeSpan Elapsed
@@ -111,30 +127,50 @@ public class RecordingController
     // burned over the output. Returns null on success, or an error message.
     public async Task<string?> StartAsync(PixelRect region, RecordFormats formats, string? overlayPng = null)
     {
-        if (!EnsureFfmpeg(out var err)) return err;
         _region = region;
         _formats = formats;
         _overlayPng = overlayPng;
         _stopping = false;
         _audioWarning = null;
+        CaptureEndedEarly = false;
 
-        var encoder = (await _detector!.DetectAsync(
-            _settings.EncoderOverride == "Auto" ? null : _settings.EncoderOverride))?.Name ?? "libx264";
-        if (_stopping) return null;
-        _encoderName = encoder;
-        _intermediate = Path.Combine(Path.GetTempPath(), "aqua-rec-" + Guid.NewGuid().ToString("N") + ".mp4");
+        try
+        {
+            if (!EnsureFfmpeg(out var err)) { Cleanup(); return err; }
+            var encoder = (await _detector!.DetectAsync(
+                _settings.EncoderOverride == "Auto" ? null : _settings.EncoderOverride))?.Name ?? "libx264";
+            _encoderName = encoder;
+            _intermediate = Path.Combine(Path.GetTempPath(), "aqua-rec-" + Guid.NewGuid().ToString("N") + ".mp4");
 
-        // Resolve the audio sources (auto-detecting a system-loopback device when none is named).
-        var audio = await ResolveAudioAsync();
-        _hasAudio = audio.Any;
+            // Resolve the audio sources (auto-detecting a system-loopback device when none is named).
+            var audio = await ResolveAudioAsync();
+            if (_stopping) { Cleanup(); return "Recording was cancelled before capture started."; }
+            _hasAudio = audio.Any;
 
-        _startedUtc = DateTime.UtcNow;
-        _pause.Start(0);
-        _pausedAccumSec = 0;
-        Keep = null;
-        _session = _runner!.StartCapture(
-            FFmpegArgs.CaptureGdigrab(region, _settings.RecordFps, encoder, _intermediate, audio));
-        return null;
+            _pause.Start(0);
+            _pausedAccumSec = 0;
+            Keep = null;
+            var session = _runner!.StartCapture(
+                FFmpegArgs.CaptureGdigrab(region, _settings.RecordFps, encoder, _intermediate, audio));
+            _session = session;
+            _clock.Restart();
+            _ = WatchSessionAsync(session);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Cleanup();
+            return "Recording could not start: " + ex.Message;
+        }
+    }
+
+    private async Task WatchSessionAsync(IFFmpegSession session)
+    {
+        try { await session.Exited.ConfigureAwait(false); }
+        catch { /* the process handle went away; treat it as exited */ }
+        if (_stopping || !ReferenceEquals(_session, session)) return;
+        CaptureEndedEarly = true;
+        CaptureEnded?.Invoke();
     }
 
     // Toggle pause/resume. gdigrab keeps running; we only record the paused span (dropped at encode)
@@ -202,22 +238,38 @@ public class RecordingController
     public async Task StopCaptureAsync()
     {
         _stopping = true;
+        _clock.Stop();
         double total = NowSec;
-        if (_pause.IsPaused) _pause.Resume(total); // close any open pause at stop
+        if (_pause.IsPaused)
+        {
+            _pausedAccumSec += total - _pauseBeganSec;
+            _pause.Resume(total); // close any open pause at stop
+        }
         _captureDuration = TimeSpan.FromSeconds(total);
 
         // Default the kept spans from the pause tracker. A later SetTrim (the trim dialog) may
         // overwrite Keep before EncodeAndFinishAsync runs. Null Keep => no pauses, no trim.
         var kept = _pause.KeptIntervals(total);
         Keep = HasGaps(kept, total) ? kept : null;
+        // Stop first: an invalid/inaccessible output folder must never leave capture running.
+        var session = _session;
+        _session = null;
+        _capResult = session == null ? null : await session.StopAsync();
         // Two recordings finishing in the same second would otherwise overwrite each other (the
         // encode runs in the background, so another capture can start meanwhile) — pick a unique stem.
         var exts = new List<string>();
         if (_formats.HasFlag(RecordFormats.Mp4)) exts.Add(".mp4");
         if (_formats.HasFlag(RecordFormats.Gif)) exts.Add(".gif");
-        _outBase = OutputService.UniqueRecordingOutputBase(_settings, DateTime.Now, exts.ToArray());
-        _capResult = _session == null ? null : await _session.StopAsync();
-        _session = null;
+        try
+        {
+            _outBase = OutputService.ReserveRecordingOutputBase(_settings, DateTime.Now,
+                out _outputReservation, exts.ToArray());
+        }
+        catch
+        {
+            Cleanup(); // no encode will follow, so the intermediate would be orphaned in %TEMP%
+            throw;
+        }
     }
 
     // SLOW: runs in the background after the overlay is gone. Encodes the intermediate into
@@ -230,6 +282,8 @@ public class RecordingController
         {
             if (_capResult is { Ok: false })
             { Finished?.Invoke(null, "Capture failed: " + Tail(_capResult.StderrTail)); return; }
+            if (Keep is { Count: 0 })
+            { Finished?.Invoke(null, "No recorded frames remain after pause/trim."); return; }
 
             // PAUSE/TRIM: when there are paused gaps or a trim range, first re-mux the intermediate
             // down to the kept spans (burning in the annotation overlay + audio there). The size-cap
@@ -264,15 +318,11 @@ public class RecordingController
 
             // Apply the clipboard action to the produced files (last file wins on the clipboard).
             var last = result.Files.Count > 0 ? result.Files[^1] : null;
-            if (last != null)
+            if (last != null && clip != ClipboardMode.None)
             {
-                switch (clip)
-                {
-                    case ClipboardMode.Image: // no bitmap for a recording — copy the file instead
-                    case ClipboardMode.File: OutputService.CopyFileToClipboard(last); break;
-                    case ClipboardMode.Path: OutputService.CopyPathToClipboard(last); break;
-                    case ClipboardMode.None: break;
-                }
+                // Encoding runs on a pool thread; WPF clipboard operations require the UI's STA.
+                if (System.Windows.Application.Current?.Dispatcher is { } dispatcher)
+                    await dispatcher.InvokeAsync(() => _copyToClipboard(last, clip));
             }
             Finished?.Invoke(result, null);
         }
@@ -280,8 +330,20 @@ public class RecordingController
         finally { Cleanup(); }
     }
 
+    private static void CopyToClipboard(string path, ClipboardMode clip)
+    {
+        switch (clip)
+        {
+            case ClipboardMode.Image: // no bitmap for a recording — copy the file instead
+            case ClipboardMode.File: OutputService.CopyFileToClipboard(path); break;
+            case ClipboardMode.Path: OutputService.CopyPathToClipboard(path); break;
+        }
+    }
+
     private void Cleanup()
     {
+        _outputReservation?.Dispose();
+        _outputReservation = null;
         try { if (File.Exists(_intermediate)) File.Delete(_intermediate); } catch { }
         try { if (_trimmed != null && File.Exists(_trimmed)) File.Delete(_trimmed); } catch { }
         try { if (_overlayPng != null && File.Exists(_overlayPng)) File.Delete(_overlayPng); } catch { }

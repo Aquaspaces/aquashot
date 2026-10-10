@@ -116,6 +116,23 @@ public partial class InlineToolbar : UserControl
     }
     public void SetTimer(string text) => RecTimer.Text = text;
 
+    public void SetRedacting(bool busy)
+    {
+        BtnRedact.IsEnabled = BtnPrimary.IsEnabled = !busy;
+        BtnPin.IsEnabled = !busy && CurrentOutput == CaptureOutput.Image;
+        BtnRedact.ToolTip = busy ? "Detecting text…" : "Auto-redact: blur/pixelate detected text (OCR)";
+    }
+
+    // Once recording starts, changing capture/annotation settings cannot affect that session.
+    public void SetRecordingControls(bool active, bool busy = false)
+    {
+        foreach (UIElement child in Actions.Children)
+            child.IsEnabled = !active || child == BtnPrimary || child == BtnCancel || child == BtnPause;
+        BtnPrimary.IsEnabled = !busy;
+        BtnPause.IsEnabled = !busy;
+        if (!active) BtnPin.IsEnabled = CurrentOutput == CaptureOutput.Image;
+    }
+
     // Swap the pause/resume glyph + tooltip to mirror the recording state.
     public void SetPaused(bool paused)
     {

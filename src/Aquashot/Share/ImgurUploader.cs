@@ -27,8 +27,7 @@ public sealed class ImgurUploader : IUploader
                 return ShareResult.Failure("File not found: " + filePath);
 
             using var form = new MultipartFormDataContent();
-            var bytes = await File.ReadAllBytesAsync(filePath, ct);
-            var part = new ByteArrayContent(bytes);
+            using var part = new StreamContent(File.OpenRead(filePath));
             part.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
             form.Add(part, "image", Path.GetFileName(filePath));
 

@@ -41,4 +41,4 @@ public record RecordOptions(
     string? EncoderOverride);
 
 // Result of finalizing: produced files + size-cap flag.
-public record RecordResult(IReadOnlyList<string> Files, bool SizeCapForced);
+public record RecordResult(IReadOnlyList<string> Files, bool SizeCapForced, bool SizeBudgetExceeded = false);

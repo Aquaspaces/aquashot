@@ -102,15 +102,16 @@ public class RecordingEncoderTests
     }
 
     [Fact]
-    public async Task Mp4_filesize_cap_derives_from_video_budget()
+    public async Task Mp4_targets_budget_without_truncating_the_clip()
     {
         var runner = new FakeRunner();
         var enc = new RecordingEncoder(runner, sizeOf: _ => 1_000_000,
             videoBudgetBytes: 30L * 1024 * 1024);
         await enc.ProduceAsync("mid.mp4", "libx264", RecordFormats.Mp4,
             TimeSpan.FromSeconds(10), sourceWidth: 1280, fps: 30, outBase: "out");
-        // 30 MB budget -> -fs 29M
-        runner.Calls[0].Any(a => a == "29M").Should().BeTrue();
+        runner.Calls[0].Should().NotContain("-fs");
+        runner.Calls[0].Should().Contain(
+            $"{SizeTargeter.BitrateKbps(TimeSpan.FromSeconds(10), 30L * 1024 * 1024)}k");
     }
 
     [Fact]
@@ -147,5 +148,21 @@ public class RecordingEncoderTests
         bi.Should().BeGreaterThanOrEqualTo(0);
         int kbps = int.Parse(args[bi + 1].TrimEnd('k'));
         kbps.Should().BeGreaterThan(10_000); // must not collapse to the 200 kbps floor on overflow
+    }
+
+    [Theory]
+    [InlineData(RecordFormats.Mp4)]
+    [InlineData(RecordFormats.Gif)]
+    public async Task Complete_output_that_cannot_fit_is_reported(RecordFormats format)
+    {
+        var runner = new FakeRunner();
+        var encoder = new RecordingEncoder(runner, sizeOf: _ => 60L * 1024 * 1024);
+
+        var result = await encoder.ProduceAsync("mid.mp4", "libx264", format,
+            TimeSpan.FromHours(1), sourceWidth: 1280, fps: 30, outBase: "out");
+
+        result.Files.Should().ContainSingle();
+        result.SizeBudgetExceeded.Should().BeTrue();
+        runner.Calls.Should().OnlyContain(args => !args.Contains("-fs"));
     }
 }

@@ -1,16 +1,26 @@
 <Window x:Class="Aquashot.Settings.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Aquashot Settings" Width="480" SizeToContent="Height"
-        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
+        Title="Aquashot Settings" Width="560" Height="740" MinWidth="480" MinHeight="360"
+        WindowStartupLocation="CenterScreen"
         Background="{StaticResource B.Surface}" TextOptions.TextFormattingMode="Display">
-    <StackPanel Margin="20">
+    <DockPanel Margin="20">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Cancel" Style="{StaticResource GhostButton}" Width="88" Margin="0,0,8,0" IsCancel="True"/>
+            <Button x:Name="SaveButton" Content="Save" Style="{StaticResource ModernButton}" Width="88" Click="Save_Click" IsDefault="True"/>
+        </StackPanel>
+        <ScrollViewer x:Name="SettingsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="0,0,12,0">
         <TextBlock Text="Aquashot" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,2"/>
         <TextBlock Text="Settings" Foreground="{StaticResource B.TextDim}" Margin="0,0,0,18"/>
 
         <TextBlock Text="HOTKEY" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}"/>
         <TextBox x:Name="HotkeyBox" IsReadOnly="True" Margin="0,4,0,14"
-                 PreviewKeyDown="HotkeyBox_PreviewKeyDown" ToolTip="Click and press a key combo"/>
+                 PreviewKeyDown="HotkeyBox_PreviewKeyDown" ToolTip="Click and press a key combo; Backspace clears. Tab moves to the next setting."/>
+
+        <TextBlock Text="FREEZE DESKTOP HOTKEY" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}"/>
+        <TextBox x:Name="FreezeHotkeyBox" IsReadOnly="True" Margin="0,4,0,14"
+                 PreviewKeyDown="FreezeHotkeyBox_PreviewKeyDown" ToolTip="Click and press a key combo; Backspace clears"/>
 
         <TextBlock Text="SAVE FOLDER" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource B.TextDim}"/>
         <DockPanel Margin="0,4,0,14">
@@ -259,13 +269,9 @@
         <CheckBox x:Name="StartupCheck" Content="Run at Windows startup" Margin="0,0,0,10"/>
         <CheckBox x:Name="EnableOcrCheck" Content="Index screenshot text (OCR) for search" Margin="0,0,0,18"/>
 
-        <DockPanel>
-            <Button x:Name="DisableSnipBtn" Content="Disable Windows PrtSc→Snip" Style="{StaticResource GhostButton}"
-                    DockPanel.Dock="Left" Click="DisableSnip_Click"/>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Content="Cancel" Style="{StaticResource GhostButton}" Width="88" Margin="0,0,8,0" IsCancel="True"/>
-                <Button Content="Save" Style="{StaticResource ModernButton}" Width="88" Click="Save_Click" IsDefault="True"/>
-            </StackPanel>
-        </DockPanel>
-    </StackPanel>
+        <Button x:Name="DisableSnipBtn" Content="Disable Windows PrtSc→Snip" Style="{StaticResource GhostButton}"
+                HorizontalAlignment="Left" Click="DisableSnip_Click"/>
+        </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
 </Window>

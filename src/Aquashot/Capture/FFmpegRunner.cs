@@ -34,12 +34,21 @@ public class FFmpegRunner : IFFmpegRunner
         using var p = new Process { StartInfo = Psi(args) };
         var sb = new StringBuilder();
         p.ErrorDataReceived += (_, e) => { if (e.Data != null) Append(sb, e.Data); };
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) Append(sb, e.Data); };
+        ct.ThrowIfCancellationRequested();
         p.Start();
         p.BeginErrorReadLine();
-        p.BeginOutputReadLine();
-        await p.WaitForExitAsync(ct);
-        return new FFmpegResult(p.ExitCode, sb.ToString());
+        // Probe listings (notably -encoders) live on stdout; truncating them loses video
+        // encoders near the top. Encoding progress stays bounded on stderr.
+        var stdout = p.StandardOutput.ReadToEndAsync();
+        try { await p.WaitForExitAsync(ct).ConfigureAwait(false); }
+        catch (OperationCanceledException)
+        {
+            try { p.Kill(entireProcessTree: true); }
+            catch (InvalidOperationException) { /* already exited */ }
+            await p.WaitForExitAsync().ConfigureAwait(false);
+            throw;
+        }
+        return new FFmpegResult(p.ExitCode, (await stdout.ConfigureAwait(false)) + ReadTail(sb));
     }
 
     public IFFmpegSession StartCapture(IReadOnlyList<string> args)
@@ -47,37 +56,57 @@ public class FFmpegRunner : IFFmpegRunner
         var p = new Process { StartInfo = Psi(args) };
         var sb = new StringBuilder();
         p.ErrorDataReceived += (_, e) => { if (e.Data != null) Append(sb, e.Data); };
-        p.Start();
-        p.BeginErrorReadLine();
-        return new Session(p, sb);
+        try
+        {
+            p.Start();
+            p.BeginErrorReadLine();
+            p.BeginOutputReadLine(); // drain redirected stdout so a full pipe cannot stall capture
+            return new Session(p, sb);
+        }
+        catch { p.Dispose(); throw; }
     }
 
     private static void Append(StringBuilder sb, string line)
     {
-        sb.Append(line).Append('\n');
-        if (sb.Length > StderrTailChars * 2) sb.Remove(0, sb.Length - StderrTailChars);
+        lock (sb)
+        {
+            sb.Append(line).Append('\n');
+            if (sb.Length > StderrTailChars * 2) sb.Remove(0, sb.Length - StderrTailChars);
+        }
     }
+
+    private static string ReadTail(StringBuilder sb) { lock (sb) return sb.ToString(); }
 
     private sealed class Session : IFFmpegSession
     {
         private readonly Process _p;
         private readonly StringBuilder _sb;
-        public Session(Process p, StringBuilder sb) { _p = p; _sb = sb; }
+        public Session(Process p, StringBuilder sb) { _p = p; _sb = sb; Exited = p.WaitForExitAsync(); }
+
+        public Task Exited { get; }
 
         public async Task<FFmpegResult> StopAsync()
         {
             try
             {
                 // Graceful: 'q' tells ffmpeg to finalize the file (write moov atom, etc.).
-                await _p.StandardInput.WriteLineAsync("q");
-                await _p.StandardInput.FlushAsync();
+                await _p.StandardInput.WriteLineAsync("q").ConfigureAwait(false);
+                await _p.StandardInput.FlushAsync().ConfigureAwait(false);
             }
             catch { /* stdin may be closed if ffmpeg already exited */ }
 
-            if (!_p.WaitForExit(5000)) { try { _p.Kill(true); } catch { } _p.WaitForExit(2000); }
-            var code = _p.HasExited ? _p.ExitCode : -1;
-            _p.Dispose();
-            return new FFmpegResult(code, _sb.ToString());
+            try
+            {
+                try { await _p.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
+                catch (TimeoutException)
+                {
+                    try { _p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+                    try { await _p.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+                    catch (TimeoutException) { }
+                }
+                return new FFmpegResult(_p.HasExited ? _p.ExitCode : -1, ReadTail(_sb));
+            }
+            finally { _p.Dispose(); }
         }
     }
 }

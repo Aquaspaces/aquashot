@@ -70,6 +70,8 @@ public partial class ColorPickerWindow : Window
 
     private void OnMouseUp(object sender, MouseButtonEventArgs e)
     {
+        var p = e.GetPosition(Overlay);
+        _current = SampleAt((int)(p.X * _sc), (int)(p.Y * _sc));
         Picked?.Invoke(ColorHex.Rgb(_current.r, _current.g, _current.b));
     }
 

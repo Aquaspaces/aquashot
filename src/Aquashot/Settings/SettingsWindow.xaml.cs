@@ -15,6 +15,7 @@ public partial class SettingsWindow : Window
 {
     public AppSettings Result { get; private set; }
     private string _hotkey;
+    private string _freezeHotkey;
     private string _scrollingHotkey = "";
     private string _repeatRegionHotkey = "";
     private string _recordRegionHotkey = "";
@@ -24,9 +25,12 @@ public partial class SettingsWindow : Window
     public SettingsWindow(AppSettings current)
     {
         InitializeComponent();
+        Height = Math.Min(Height, SystemParameters.WorkArea.Height);
         Result = current;
         _hotkey = current.Hotkey;
         HotkeyBox.Text = current.Hotkey;
+        _freezeHotkey = current.FreezeHotkey;
+        FreezeHotkeyBox.Text = current.FreezeHotkey;
         FolderBox.Text = current.SaveFolder;
         PatternBox.Text = current.FilenamePattern;
         FormatBox.SelectedIndex =
@@ -159,7 +163,7 @@ public partial class SettingsWindow : Window
     private static double ParseClampD(string text, double current, double min, double max)
     {
         if (!double.TryParse(text?.Trim(), System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out double v)) v = current;
+                System.Globalization.CultureInfo.InvariantCulture, out double v) || !double.IsFinite(v)) v = current;
         return Math.Clamp(v, min, max);
     }
 
@@ -188,57 +192,28 @@ public partial class SettingsWindow : Window
 
     private void HotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        e.Handled = true;
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
-        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
-            or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
-            return;
+        if (CaptureCombo(e) is { } s) { _hotkey = s; HotkeyBox.Text = s; }
+    }
 
-        var mods = Keyboard.Modifiers;
-        string s = "";
-        if (mods.HasFlag(ModifierKeys.Control)) s += "Ctrl+";
-        if (mods.HasFlag(ModifierKeys.Alt)) s += "Alt+";
-        if (mods.HasFlag(ModifierKeys.Shift)) s += "Shift+";
-        if (mods.HasFlag(ModifierKeys.Windows)) s += "Win+";
-        s += key.ToString();
-        _hotkey = s;
-        HotkeyBox.Text = s;
+    private void FreezeHotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (CaptureCombo(e) is { } s) { _freezeHotkey = s; FreezeHotkeyBox.Text = s; }
     }
 
     // Capture a combo for the scrolling-capture hotkey. Backspace/Delete clears it (blank disables).
     private void ScrollingHotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        e.Handled = true;
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
-
-        if (key is Key.Back or Key.Delete)
-        {
-            _scrollingHotkey = "";
-            ScrollingCaptureHotkeyBox.Text = "";
-            return;
-        }
-        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
-            or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
-            return;
-
-        var mods = Keyboard.Modifiers;
-        string s = "";
-        if (mods.HasFlag(ModifierKeys.Control)) s += "Ctrl+";
-        if (mods.HasFlag(ModifierKeys.Alt)) s += "Alt+";
-        if (mods.HasFlag(ModifierKeys.Shift)) s += "Shift+";
-        if (mods.HasFlag(ModifierKeys.Windows)) s += "Win+";
-        s += key.ToString();
-        _scrollingHotkey = s;
-        ScrollingCaptureHotkeyBox.Text = s;
+        if (CaptureCombo(e) is { } s) { _scrollingHotkey = s; ScrollingCaptureHotkeyBox.Text = s; }
     }
 
     // Shared combo-capture for the per-action hotkey boxes: Backspace/Delete clears (blank disables);
     // lone modifier presses are ignored; otherwise returns "Ctrl+Alt+Key". Returns null to ignore.
     private static string? CaptureCombo(KeyEventArgs e)
     {
-        e.Handled = true;
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
-        if (key is Key.Back or Key.Delete) return "";
+        if (key == Key.Tab) return null;
+        e.Handled = true;
+        if ((key is Key.Back or Key.Delete) && Keyboard.Modifiers == ModifierKeys.None) return "";
         if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
             or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
             return null;
@@ -341,10 +316,11 @@ public partial class SettingsWindow : Window
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
-        Result = Result with
+        var result = Result with
         {
             Hotkey = _hotkey,
-            SaveFolder = FolderBox.Text,
+            FreezeHotkey = _freezeHotkey,
+            SaveFolder = FolderBox.Text.Trim(),
             FilenamePattern = PatternBox.Text,
             ImageFormat = SelectedFormat(),
             DefaultClipboardAction = TagText(ClipboardActionBox, Result.DefaultClipboardAction),
@@ -400,9 +376,19 @@ public partial class SettingsWindow : Window
             ShareAfterSave = ShareAfterSaveCheck.IsChecked == true
         };
 
-        var reg = new StartupRegistration("Aquashot", Environment.ProcessPath ?? "");
-        if (Result.RunAtStartup) reg.Enable(); else reg.Disable();
-
+        try
+        {
+            System.IO.Directory.CreateDirectory(result.SaveFolder);
+            var reg = new StartupRegistration("Aquashot", Environment.ProcessPath ?? "");
+            if (result.RunAtStartup) reg.Enable(); else reg.Disable();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "Could not apply settings: " + ex.Message, "Aquashot",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        Result = result;
         DialogResult = true;
     }
 }

@@ -21,15 +21,16 @@ public static class SizeTargeter
     {
         if (budgetBytes >= long.MaxValue) return UnlimitedKbps;
         double sec = Math.Max(0.5, duration.TotalSeconds);
-        double bits = budgetBytes * 8 * 0.92;
-        return Math.Max(200, (int)(bits / 1000.0 / sec));
+        double bits = budgetBytes * 8.0 * 0.92;
+        return (int)Math.Clamp(bits / 1000.0 / sec, 200, UnlimitedKbps);
     }
 
     public static (int fps, int width) GifPlan(int sourceWidth, int requestedFps, int maxFps, int maxWidth) =>
         (Math.Min(maxFps, requestedFps), Math.Min(maxWidth, sourceWidth));
 
     public static (int fps, int width) Shrink((int fps, int width) p) =>
-        (Math.Max(MinGifFps, p.fps / 2), Math.Max(MinGifWidth, p.width / 2));
+        (Math.Min(p.fps, Math.Max(MinGifFps, p.fps / 2)),
+         Math.Min(p.width, Math.Max(MinGifWidth, p.width / 2)));
 
     public static bool OverBudget(long actualBytes, long budgetBytes) => actualBytes > budgetBytes;
 }

@@ -10,14 +10,15 @@ public static class FilenameGenerator
     public static string Generate(string pattern, string ext, DateTime now,
         string? windowTitle = null, string? appName = null)
     {
-        // Substitute the {window}/{app} tokens FIRST (sanitized), so a date-format pass can't
-        // mangle their text and a date pattern still works alongside them.
-        var withTokens = Regex.Replace(pattern, "{(window|app)}", m =>
-            string.Equals(m.Groups[1].Value, "window", StringComparison.OrdinalIgnoreCase)
-                ? Sanitize(windowTitle) : Sanitize(appName),
-            RegexOptions.IgnoreCase);
-
-        var name = Regex.Replace(withTokens, "{(.*?)}", m => now.ToString(m.Groups[1].Value));
+        // One pass keeps braces in window titles/app names from becoming date formats.
+        var name = Regex.Replace(pattern, "{(.*?)}", m =>
+        {
+            var token = m.Groups[1].Value;
+            if (token.Equals("window", StringComparison.OrdinalIgnoreCase)) return Sanitize(windowTitle);
+            if (token.Equals("app", StringComparison.OrdinalIgnoreCase)) return Sanitize(appName);
+            try { return now.ToString(token); }
+            catch (FormatException) { return m.Value; } // keep unfinished/invalid formats usable in the preview
+        });
         var dotExt = "." + ext.TrimStart('.');
         return name.EndsWith(dotExt, StringComparison.OrdinalIgnoreCase) ? name : name + dotExt;
     }

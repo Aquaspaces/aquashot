@@ -88,6 +88,52 @@ public class AnnotationRendererTests
     }
 
     [Fact]
+    public void RenderTransparent_PreservesRedactionsAsOpaqueMasksForRecordings()
+    {
+        var pixels = Sta(() =>
+        {
+            var bitmap = new AnnotationRenderer().RenderTransparent(50, 50, new Shape[]
+            {
+                new BlurShape(5, 5, 10, 10, 8),
+                new PixelateShape(25, 25, 10, 10, 8),
+            });
+            var bytes = new byte[50 * 50 * 4];
+            bitmap.CopyPixels(bytes, 50 * 4, 0);
+            return bytes;
+        });
+        pixels[(10 * 50 + 10) * 4 + 3].Should().Be(255);
+        pixels[(30 * 50 + 30) * 4 + 3].Should().Be(255);
+        pixels[(20 * 50 + 20) * 4 + 3].Should().Be(0);
+    }
+
+    [Fact]
+    public void PixelEffects_IntersectTheCanvasAndCoverFractionalEdges()
+    {
+        var pixels = Sta(() =>
+        {
+            var dv = new DrawingVisual();
+            using (var dc = dv.RenderOpen())
+                new AnnotationRenderer().Draw(dc, new Shape[]
+                {
+                    new PixelateShape(-10, -5, 20, 15, 2),
+                    new PixelateShape(30.2, 30.2, 9.2, 9.2, 2),
+                    new PixelateShape(250, 0, 20, 20, 2),
+                }, BlankBase(), new Size(200, 200));
+            var bitmap = new RenderTargetBitmap(200, 200, 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(dv);
+            var bytes = new byte[200 * 200 * 4];
+            bitmap.CopyPixels(bytes, 200 * 4, 0);
+            return bytes;
+        });
+        byte Alpha(int x, int y) => pixels[(y * 200 + x) * 4 + 3];
+        Alpha(9, 9).Should().Be(255);
+        Alpha(10, 5).Should().Be(0, "clipping must not shift the right edge");
+        Alpha(5, 10).Should().Be(0, "clipping must not shift the bottom edge");
+        Alpha(39, 39).Should().Be(255, "fractional redaction edges must be rounded outwards");
+        Alpha(199, 5).Should().Be(0, "a wholly off-canvas shape must draw nothing");
+    }
+
+    [Fact]
     public void Spotlight_DimsOutsideRect_KeepsCenterClear()
     {
         var outp = Sta(() =>

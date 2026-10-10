@@ -50,6 +50,7 @@ public partial class AnnotationEditorWindow : Window
     private (double X, double Y) _moveLastImg;
 
     private bool _saved;
+    private bool _redacting;
     private bool _closed; // set on close so async continuations can bail before touching the window
 
     // settings/ocr are optional so the editor can be opened standalone; onSave is last to allow a
@@ -63,7 +64,7 @@ public partial class AnnotationEditorWindow : Window
         _onSave = onSave;
         _settings = settings ?? new Aquashot.Settings.AppSettings();
         _ocr = ocr;
-        SourceImage.Source = source; // AnnotationRenderer.Draw ignores its source arg, so show the image here
+        SourceImage.Source = source;
 
         // Drawing surface sized to the IMAGE in pixels; a ScaleTransform fits it to the view,
         // so shapes are authored in image-pixel space (same model as the capture overlay).
@@ -80,8 +81,9 @@ public partial class AnnotationEditorWindow : Window
         _toolbar = new InlineToolbar();
         _toolbar.SetEditorMode();
         _toolbar.ToolChanged += OnToolChanged;
-        _toolbar.UndoRequested += () => { _doc.Undo(); ClearSelection(); _layer.Refresh(); };
-        _toolbar.RedoRequested += () => { _doc.Redo(); ClearSelection(); _layer.Refresh(); };
+        _doc.InitBase(source);
+        _toolbar.UndoRequested += Undo;
+        _toolbar.RedoRequested += Redo;
         _toolbar.PrimaryClicked += Save;
         _toolbar.CancelRequested += Close;
         _toolbar.EyedropperRequested += () => _sampling = true;
@@ -144,6 +146,7 @@ public partial class AnnotationEditorWindow : Window
                 _movingSelected = hit >= 0;
                 if (hit >= 0)
                 {
+                    _doc.BeginGesture(); // the whole drag is one undo step
                     _moveLastImg = (cx, cy);
                     _dragging = true;
                     Overlay.CaptureMouse();
@@ -165,7 +168,7 @@ public partial class AnnotationEditorWindow : Window
                 Overlay.CaptureMouse();
                 return;
             default:
-                _start = e.GetPosition(Overlay);
+                _start = _lastDip = e.GetPosition(Overlay);
                 _dragging = true;
                 Overlay.CaptureMouse();
                 return;
@@ -200,12 +203,15 @@ public partial class AnnotationEditorWindow : Window
         if (_cropMode) { CropUp(e); return; }
         if (_toolbar.CurrentTool == ToolKind.Select)
         {
+            _doc.EndGesture();
             _movingSelected = false;
             _dragging = false;
             Overlay.ReleaseMouseCapture();
             return;
         }
         if (!_dragging) return;
+        // Mouse-up can arrive after the last move (or without a move for a quick drag).
+        OnMouseMove(sender, e);
         _dragging = false;
         Overlay.ReleaseMouseCapture();
         var preview = _layer.Preview;
@@ -216,10 +222,7 @@ public partial class AnnotationEditorWindow : Window
             _doc.Add(new HighlightShape(_penPoints.ToArray(), _toolbar.CurrentColor,
                 _settings.HighlighterWidth, _settings.HighlighterOpacity));
         else if (preview is SpotlightShape sp)
-        {
-            _doc.RemoveAllOfType<SpotlightShape>();
-            _doc.Add(sp);
-        }
+            _doc.AddReplacing(sp);
         else if (preview != null)
             _doc.Add(preview);
         _penPoints = null;
@@ -304,8 +307,8 @@ public partial class AnnotationEditorWindow : Window
         }
         if (e.Key == Key.Escape) { Close(); return; }
         if (e.Key == Key.Enter) { Save(); return; }
-        if (e.Key == Key.Z && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc.Undo(); ClearSelection(); _layer.Refresh(); }
-        else if (e.Key == Key.Y && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { _doc.Redo(); ClearSelection(); _layer.Refresh(); }
+        if (e.Key == Key.Z && (Keyboard.Modifiers & ModifierKeys.Control) != 0) Undo();
+        else if (e.Key == Key.Y && (Keyboard.Modifiers & ModifierKeys.Control) != 0) Redo();
         else if ((e.Key == Key.Delete || e.Key == Key.Back) && _selectedIndex >= 0)
         {
             _doc.RemoveAt(_selectedIndex);
@@ -319,7 +322,10 @@ public partial class AnnotationEditorWindow : Window
     // OCR the source image and blur/pixelate every (matching) detected text line. No-op without OCR.
     private async void OnRedact()
     {
-        if (_ocr == null) return;
+        if (_ocr == null || _redacting) return;
+        _redacting = true;
+        _toolbar.SetRedacting(true);
+        var source = _source;
         string? temp = null;
         try
         {
@@ -330,21 +336,36 @@ public partial class AnnotationEditorWindow : Window
             using (var fs = System.IO.File.Create(temp)) enc.Save(fs);
 
             var lines = await _ocr.RecognizeLinesAsync(temp);
-            if (_closed) return; // the editor was closed while OCR was in flight
+            if (_closed || !ReferenceEquals(source, _source)) return;
             // Boxes are in the saved-image's pixel space == the editor's image space (offset 0,0).
             var chosen = Aquashot.Redaction.AutoRedactor.SelectLines(lines, _settings.RedactPatterns);
             var shapes = Aquashot.Redaction.AutoRedactor.BuildShapes(chosen, 0, 0,
                 _settings.RedactStyle, _settings.RedactBlurRadius, _settings.RedactPixelateBlock);
             if (shapes.Count > 0) { _doc.AddRange(shapes); _layer.Refresh(); }
         }
-        catch { /* best-effort */ }
-        finally { if (temp != null) try { System.IO.File.Delete(temp); } catch { } }
+        catch (Exception ex)
+        {
+            if (!_closed)
+                System.Windows.MessageBox.Show(this, "Text could not be redacted: " + ex.Message,
+                    "Aquashot", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _redacting = false;
+            if (!_closed) _toolbar.SetRedacting(false);
+            if (temp != null) try { System.IO.File.Delete(temp); } catch { }
+        }
     }
 
     // ---- Post-capture crop ----
 
     private void OnCropModeChanged(bool on)
     {
+        if (!on && _cropMode && _cropStart != null)
+        {
+            ApplyCrop();
+            return;
+        }
         _cropMode = on;
         ClearSelection();
         ClearCropRect();
@@ -391,6 +412,8 @@ public partial class AnnotationEditorWindow : Window
     private void ApplyCrop()
     {
         if (_cropStart is not (double sx, double sy) || _cropRect == null || _cropEndDip is not Point endDip) return;
+        _dragging = false;
+        Overlay.ReleaseMouseCapture();
         var (cx, cy) = ToImage(endDip);
         double x0 = Math.Min(sx, cx), y0 = Math.Min(sy, cy);
         double w = Math.Abs(cx - sx), h = Math.Abs(cy - sy);
@@ -404,24 +427,51 @@ public partial class AnnotationEditorWindow : Window
         var cropped = CropController.Apply(_source, clampedRect);
 
         var moved = CropController.TranslateShapes(_doc.Shapes, -clamped.X, -clamped.Y);
-        _doc.ReplaceAll(moved);
-
-        _source = cropped;
-        SourceImage.Source = cropped;
-        _layer.Source = cropped;
-        _layer.Width = cropped.PixelWidth;
-        _layer.Height = cropped.PixelHeight;
+        _doc.SetBase(cropped, moved); // one undo step restores both the image and the shapes
 
         ClearCropRect();
         _cropStart = null;
         _cropEndDip = null;
         _cropMode = false;
         _toolbar.ResetCropToggle();
-        Layout();
+        SyncSource();
+    }
+
+    private void Undo()
+    {
+        if (_cropMode || _redacting) return;
+        _doc.Undo();
+        ClearSelection();
+        SyncSource();
+    }
+
+    private void Redo()
+    {
+        if (_cropMode || _redacting) return;
+        _doc.Redo();
+        ClearSelection();
+        SyncSource();
+    }
+
+    // Show whichever image the document's current state uses (it changes on crop and its undo).
+    private void SyncSource()
+    {
+        if (_doc.Base is BitmapSource img && !ReferenceEquals(img, _source))
+        {
+            _source = img;
+            SourceImage.Source = img;
+            _layer.Source = img;
+            _layer.Width = img.PixelWidth;
+            _layer.Height = img.PixelHeight;
+            Layout();
+        }
+        _layer.Refresh();
     }
 
     private void CancelCrop()
     {
+        _dragging = false;
+        Overlay.ReleaseMouseCapture();
         ClearCropRect();
         _cropStart = null;
         _cropEndDip = null;
@@ -457,7 +507,8 @@ public partial class AnnotationEditorWindow : Window
     // Flatten the source + annotations into one bitmap and hand it to the caller, then close.
     private void Save()
     {
-        if (_saved) return;
+        if (_saved || _redacting) return;
+        if (_cropMode) ApplyCrop();
         _saved = true;
         var result = new AnnotationRenderer().Flatten(
             _source, new PixelRect(0, 0, _source.PixelWidth, _source.PixelHeight), _doc.Shapes);

@@ -52,6 +52,18 @@ public class PixelEffectsTests
     }
 
     [Fact]
+    public void Blur_ActuallyMixesNeighbouringPixels()
+    {
+        // A blur that only preserves size could leave redacted text readable.
+        var (raw, blurred) = Sta(() =>
+        {
+            var src = Checker(40, 24);
+            return (Distinct(src), Distinct(PixelEffects.Blur(src, 6)));
+        });
+        blurred.Should().BeGreaterThan(raw, "a blurred checkerboard has intermediate shades");
+    }
+
+    [Fact]
     public void Pixelate_ReducesDistinctColors()
     {
         // Mosaicing a fine checkerboard collapses many distinct colours into far fewer blocks.

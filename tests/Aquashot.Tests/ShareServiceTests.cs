@@ -77,6 +77,20 @@ public class ShareServiceTests
     }
 
     [Fact]
+    public void FormatCopy_Html_EncodesUrlAndFilename()
+    {
+        ShareService.FormatCopy("https://x/y.png?a=1&b=\"two\"", "Html", "<shot>&.png")
+            .Should().Be("<img src=\"https://x/y.png?a=1&amp;b=&quot;two&quot;\" alt=\"&lt;shot&gt;&amp;.png\">");
+    }
+
+    [Fact]
+    public void FormatCopy_Markdown_EscapesFilenameAndUrlDelimiters()
+    {
+        ShareService.FormatCopy("https://x/a (1).png", "Markdown", @"shot[1]\x.png")
+            .Should().Be(@"![shot\[1\]\\x.png](https://x/a%20%281%29.png)");
+    }
+
+    [Fact]
     public void FormatCopy_UnknownFormat_FallsBackToUrl()
     {
         ShareService.FormatCopy("https://x/y.png", "weird", "shot.png").Should().Be("https://x/y.png");
