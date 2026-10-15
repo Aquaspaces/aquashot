@@ -14,7 +14,7 @@ on:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-normal
     steps:
       # Pinned to a full commit SHA (mutable tags can be repointed; this action holds a token).
       # Bump deliberately via Dependabot/Renovate. 4ffc788 == v2 (2024-11-27).

@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    runs-on: namespace-profile-windows
     steps:
       - uses: actions/checkout@v4
 
